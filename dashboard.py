@@ -40,6 +40,7 @@ app = dash.Dash(
     external_stylesheets=[dbc.themes.DARKLY],
     title="量化因子策略系统",
     suppress_callback_exceptions=True,
+    meta_tags=[{"name": "viewport", "content": "width=device-width, initial-scale=1.0"}],
 )
 
 _state = {
@@ -149,7 +150,7 @@ def _base_layout(fig, title="", height=None):
 
 
 def _init_display():
-    kpi = [dbc.Col(_kpi_card(t, "--"), width=2) for t in
+    kpi = [dbc.Col(_kpi_card(t, "--"), xs=6, sm=4, md=4, lg=2) for t in
            ["累计收益率", "年化收益率", "夏普比率", "最大回撤", "胜率", "最终权益"]]
     eq = _empty_fig("暂无数据")
     dd = _empty_fig("")
@@ -260,7 +261,7 @@ def _build_today_plan(composite, close_panel, max_pos, prev_pnl):
 
 
 def _error_display(msg):
-    kpi = [dbc.Col(_kpi_card(t, "--"), width=2) for t in
+    kpi = [dbc.Col(_kpi_card(t, "--"), xs=6, sm=4, md=4, lg=2) for t in
            ["累计收益率", "年化收益率", "夏普比率", "最大回撤", "胜率", "最终权益"]]
     err_fig = _empty_fig(f"⚠ {msg}")
     return kpi, err_fig, err_fig, err_fig, err_fig, \
@@ -543,27 +544,27 @@ def _build_investment_history_card(history_df):
             html.Div(f"{cum_ret:+.2f}%" if cum_ret is not None else "--",
                      style={"fontWeight": "bold", "fontSize": "1.1rem",
                             "color": "#45df7e" if (cum_ret or 0) >= 0 else "#dc3545"}),
-        ]), width=3),
+        ]), xs=6, sm=4, md=3),
         dbc.Col(html.Div([
             html.Div("已结算/总轮次", style={"color": "#888", "fontSize": "0.7rem"}),
             html.Div(f"{len(closed_rounds)}/{total_rounds}",
                      style={"fontWeight": "bold", "fontSize": "1.1rem", "color": "#ccc"}),
-        ]), width=2),
+        ]), xs=6, sm=4, md=2),
         dbc.Col(html.Div([
             html.Div("胜率(已结算)", style={"color": "#888", "fontSize": "0.7rem"}),
             html.Div(f"{win_rounds}/{len(closed_rounds)}" if closed_rounds else "--",
                      style={"fontWeight": "bold", "fontSize": "1.1rem", "color": "#ffc107"}),
-        ]), width=2),
+        ]), xs=6, sm=4, md=2),
         dbc.Col(html.Div([
             html.Div("最佳单轮", style={"color": "#888", "fontSize": "0.7rem"}),
             html.Div(f"{max(r['weighted_ret'] for r in closed_rounds):+.2f}%" if closed_rounds else "--",
                      style={"fontWeight": "bold", "fontSize": "1.1rem", "color": "#45df7e"}),
-        ]), width=2),
+        ]), xs=6, sm=4, md=2),
         dbc.Col(html.Div([
             html.Div("最差单轮", style={"color": "#888", "fontSize": "0.7rem"}),
             html.Div(f"{min(r['weighted_ret'] for r in closed_rounds):+.2f}%" if closed_rounds else "--",
                      style={"fontWeight": "bold", "fontSize": "1.1rem", "color": "#dc3545"}),
-        ]), width=3),
+        ]), xs=6, sm=4, md=3),
     ], className="mb-3", style={"gap": "0"})
 
     # 历史表格
@@ -665,9 +666,9 @@ app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}
             "backgroundColor": "#1a1d23", "border": "1px solid #2a2d33",
             "borderRadius": "4px", "fontFamily": "monospace",
         }),
-    ], style={"padding": "14px 28px", "display": "flex", "justifyContent": "space-between",
-              "alignItems": "center", "backgroundColor": "#16191f",
-              "borderBottom": "1px solid #2a2d33"}),
+    ], style={"padding": "14px 16px", "display": "flex", "justifyContent": "space-between",
+              "alignItems": "center", "flexWrap": "wrap", "gap": "8px",
+              "backgroundColor": "#16191f", "borderBottom": "1px solid #2a2d33"}),
 
     # ---- 控制栏 ----
     html.Div([
@@ -679,9 +680,8 @@ app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}
                     options=STOCK_OPTIONS,
                     value=cfg.STOCK_POOL,
                     multi=True,
-                    style={"minWidth": "280px"},
                 ),
-            ], width=4),
+            ], xs=12, sm=12, md=6, lg=4),
 
             dbc.Col([
                 html.Label("回测区间", style={"color": "#999", "fontSize": "0.75rem", "marginBottom": "2px"}),
@@ -690,14 +690,14 @@ app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}
                         id="start-date", type="text",
                         value=_default_start,
                         placeholder="YYYY-MM-DD",
-                        style={**INPUT_STYLE, "marginRight": "4px"},
+                        style={**INPUT_STYLE, "width": "100%", "marginRight": "4px"},
                     ),
                     html.Span("~", style={"color": "#666", "margin": "0 4px", "fontSize": "0.85rem"}),
                     dcc.Input(
                         id="end-date", type="text",
                         value=_default_end,
                         placeholder="YYYY-MM-DD",
-                        style=INPUT_STYLE,
+                        style={**INPUT_STYLE, "width": "100%"},
                     ),
                 ], style={"display": "flex", "alignItems": "center"}),
                 html.Div(
@@ -705,79 +705,79 @@ app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}
                     id="cache-range-hint",
                     style={"color": "#555", "fontSize": "0.7rem", "marginTop": "2px"},
                 ),
-            ], width=3),
+            ], xs=12, sm=6, md=3, lg=3),
 
             dbc.Col([
-                html.Label(f"最大持仓", style={"color": "#999", "fontSize": "0.75rem", "marginBottom": "2px"}),
+                html.Label("最大持仓", style={"color": "#999", "fontSize": "0.75rem", "marginBottom": "2px"}),
                 dcc.Slider(id="max-positions", min=3, max=15, step=1, value=cfg.MAX_POSITIONS,
                            marks={3: "3", 6: "6", 9: "9", 12: "12", 15: "15"}),
-            ], width=2),
+            ], xs=6, sm=6, md=3, lg=2),
 
             dbc.Col([
                 html.Label("初始资金(万)", style={"color": "#999", "fontSize": "0.75rem", "marginBottom": "2px"}),
                 dcc.Input(id="initial-capital", type="number", value=100,
                           min=10, max=10000, step=10,
-                          style={"width": "90px", "color": "#ccc", "height": "32px",
+                          style={"width": "100%", "maxWidth": "90px", "color": "#ccc", "height": "32px",
                                  "backgroundColor": "#1a1d23", "border": "1px solid #2a2d33"}),
-            ], width=1),
-
-            dbc.Col([
-                html.Label(" ", style={"fontSize": "0.75rem"}),
                 html.Div([
-                    dbc.Button("缓存加载", id="btn-cache", color="info", size="sm", className="me-2"),
-                    dbc.Button("联网回测", id="btn-full", color="success", size="sm"),
-                ], style={"marginBottom": "4px"}),
+                    dbc.Button("缓存加载", id="btn-cache", color="info", size="sm", className="me-2 mt-2"),
+                    dbc.Button("联网回测", id="btn-full", color="success", size="sm", className="mt-2"),
+                ]),
                 html.Div([
                     dbc.Button("一键模拟投资", id="btn-execute", color="warning", size="sm",
-                               style={"fontWeight": "bold"}),
+                               style={"fontWeight": "bold"}, className="mt-1"),
                 ]),
-            ], width=3),
-        ], align="end"),
+            ], xs=6, sm=12, md=12, lg=3),
+        ]),
         html.Div(id="status-msg", style={
             "color": "#ffc107", "fontSize": "0.8rem", "marginTop": "8px",
             "minHeight": "20px",
         }),
-    ], style={"padding": "14px 28px", "backgroundColor": "#111318", "borderBottom": "1px solid #2a2d33"}),
+    ], style={"padding": "14px 16px", "backgroundColor": "#111318", "borderBottom": "1px solid #2a2d33"}),
 
     # ---- KPI 行 ----
     html.Div(id="kpi-container", children=[
-        dbc.Row(id="kpi-row", children=[
-            dbc.Col(_kpi_card("累计收益率", "--"), width=2),
-            dbc.Col(_kpi_card("年化收益率", "--"), width=2),
-            dbc.Col(_kpi_card("夏普比率", "--", "#17a2b8"), width=2),
-            dbc.Col(_kpi_card("最大回撤", "--", "#dc3545"), width=2),
-            dbc.Col(_kpi_card("胜率", "--", "#ffc107"), width=2),
-            dbc.Col(_kpi_card("最终权益", "--"), width=2),
+        dbc.Row(id="kpi-row", className="g-2", children=[
+            dbc.Col(_kpi_card("累计收益率", "--"), xs=6, sm=4, md=4, lg=2),
+            dbc.Col(_kpi_card("年化收益率", "--"), xs=6, sm=4, md=4, lg=2),
+            dbc.Col(_kpi_card("夏普比率", "--", "#17a2b8"), xs=6, sm=4, md=4, lg=2),
+            dbc.Col(_kpi_card("最大回撤", "--", "#dc3545"), xs=6, sm=4, md=4, lg=2),
+            dbc.Col(_kpi_card("胜率", "--", "#ffc107"), xs=6, sm=4, md=4, lg=2),
+            dbc.Col(_kpi_card("最终权益", "--"), xs=6, sm=4, md=4, lg=2),
         ]),
-    ], style={"padding": "14px 28px"}),
+    ], style={"padding": "14px 16px"}),
 
     # ---- 今日操作建议 ----
-    html.Div(id="today-plan-container", style={"padding": "0 28px 10px 28px"}),
+    html.Div(id="today-plan-container", style={"padding": "0 16px 10px 16px"}),
 
     # ---- 模拟投资历史 ----
-    html.Div(id="invest-history-container", style={"padding": "0 28px 10px 28px"}),
+    html.Div(id="invest-history-container", style={"padding": "0 16px 10px 16px"}),
 
     # ---- 图表区 ----
     dcc.Loading(id="loading-charts", type="default", color="#45df7e", children=[
         html.Div([
             dbc.Row([
-                dbc.Col(dcc.Graph(id="equity-chart", style={"height": "420px"}), width=12),
+                dbc.Col(dcc.Graph(id="equity-chart", style={"height": "380px"},
+                    config={"responsive": True}), width=12),
             ], className="mb-3"),
 
             dbc.Row([
-                dbc.Col(dcc.Graph(id="drawdown-chart", style={"height": "280px"}), width=6),
-                dbc.Col(dcc.Graph(id="factor-bar", style={"height": "280px"}), width=6),
+                dbc.Col(dcc.Graph(id="drawdown-chart", style={"height": "260px"},
+                    config={"responsive": True}), xs=12, sm=12, md=6),
+                dbc.Col(dcc.Graph(id="factor-bar", style={"height": "260px"},
+                    config={"responsive": True}), xs=12, sm=12, md=6),
             ], className="mb-3"),
 
             dbc.Row([
-                dbc.Col(dcc.Graph(id="heatmap-chart", style={"height": "320px"}), width=8),
+                dbc.Col(dcc.Graph(id="heatmap-chart", style={"height": "300px"},
+                    config={"responsive": True}), xs=12, sm=12, md=8),
                 dbc.Col(html.Div(id="trade-table", style={
-                    "maxHeight": "320px", "overflowY": "auto",
+                    "maxHeight": "300px", "overflowY": "auto",
                     "backgroundColor": "#16191f", "padding": "10px", "borderRadius": "6px",
                     "border": "1px solid #2a2d33",
-                }), width=4),
+                }), xs=12, sm=12, md=4),
             ]),
-        ], style={"padding": "0 28px 28px 28px"}),
+        ], style={"padding": "0 16px 28px 16px"}),
     ]),
 ])
 
@@ -1065,12 +1065,12 @@ def _rebuild_display(status_msg, use_cache_only=False):
 
     # KPI
     kpi = [
-        dbc.Col(_kpi_card("累计收益率", m.get("累计收益率", "--")), width=2),
-        dbc.Col(_kpi_card("年化收益率", m.get("年化收益率 (CAGR)", "--")), width=2),
-        dbc.Col(_kpi_card("夏普比率",   m.get("夏普比率", "--"), "#17a2b8"), width=2),
-        dbc.Col(_kpi_card("最大回撤",   m.get("最大回撤", "--"), "#dc3545"), width=2),
-        dbc.Col(_kpi_card("胜率",       m.get("胜率", "--"), "#ffc107"), width=2),
-        dbc.Col(_kpi_card("最终权益",   m.get("最终权益", "--")), width=2),
+        dbc.Col(_kpi_card("累计收益率", m.get("累计收益率", "--")), xs=6, sm=4, md=4, lg=2),
+        dbc.Col(_kpi_card("年化收益率", m.get("年化收益率 (CAGR)", "--")), xs=6, sm=4, md=4, lg=2),
+        dbc.Col(_kpi_card("夏普比率",   m.get("夏普比率", "--"), "#17a2b8"), xs=6, sm=4, md=4, lg=2),
+        dbc.Col(_kpi_card("最大回撤",   m.get("最大回撤", "--"), "#dc3545"), xs=6, sm=4, md=4, lg=2),
+        dbc.Col(_kpi_card("胜率",       m.get("胜率", "--"), "#ffc107"), xs=6, sm=4, md=4, lg=2),
+        dbc.Col(_kpi_card("最终权益",   m.get("最终权益", "--")), xs=6, sm=4, md=4, lg=2),
     ]
 
     mode = "缓存" if use_cache_only else "联网"

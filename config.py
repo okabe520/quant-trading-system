@@ -1,6 +1,7 @@
 """
 量化因子策略系统 - 配置文件
 """
+import os
 
 # ============ 股票池 ============
 STOCK_POOL = [
@@ -70,7 +71,7 @@ STOCK_NAMES = {
 # ============ 数据 ============
 START_DATE = "2023-01-01"
 END_DATE = "2026-05-28"
-CACHE_DIR = "E:/quant_trading_system/cache"
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 
 # ============ 因子参数 ============
 FACTOR_CONFIG = {
