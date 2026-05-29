@@ -19,21 +19,36 @@ if MODE == "supabase":
         print("[supabase_client] supabase package not installed, falling back to CSV mode")
 
 
+def _hash_pw(password: str, salt: bytes = None) -> str:
+    """PBKDF2-SHA256 密码哈希（含盐值）"""
+    if salt is None:
+        salt = os.urandom(16)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, 100000)
+    return salt.hex() + "$" + dk.hex()
+
+def _check_pw(stored: str, password: str) -> bool:
+    """验证密码是否匹配存储的哈希"""
+    try:
+        salt_hex, dk_hex = stored.split("$")
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), 100000)
+        return dk.hex() == dk_hex
+    except Exception:
+        return False
+
 def verify_login(name: str, password: str) -> bool:
-    """验证用户名和密码。优先查 users 表/CSV，其次用共享密码"""
+    """验证用户名和密码"""
     try:
         if MODE == "supabase":
             resp = _supabase.table("users").select("password_hash").eq("username", name).execute()
             if resp.data:
-                return hashlib.sha256(password.encode()).hexdigest() == resp.data[0]["password_hash"]
+                return _check_pw(resp.data[0]["password_hash"], password)
         else:
             _load_csv_users()
             if name in _CSV_USERS:
-                return hashlib.sha256(password.encode()).hexdigest() == _CSV_USERS[name]
+                return _check_pw(_CSV_USERS[name], password)
     except Exception:
         pass
-    # 回退：用共享密码验证
-    return hashlib.sha256(password.encode()).hexdigest() == hashlib.sha256(APP_PASSWORD.encode()).hexdigest()
+    return _check_pw(_hash_pw(APP_PASSWORD), password)
 
 
 # ═══════════════════════════════════════════════════
@@ -141,7 +156,7 @@ def _csv_register(username: str, password: str) -> bool:
     _load_csv_users()
     if username in _CSV_USERS:
         return False
-    _CSV_USERS[username] = hashlib.sha256(password.encode()).hexdigest()
+    _CSV_USERS[username] = _hash_pw(password)
     _save_csv_users()
     return True
 
@@ -166,8 +181,7 @@ def _supabase_user_exists(username: str) -> bool:
 
 def _supabase_register(username: str, password: str) -> bool:
     try:
-        pw_hash = hashlib.sha256(password.encode()).hexdigest()
-        _supabase.table("users").insert({"username": username, "password_hash": pw_hash}).execute()
+        _supabase.table("users").insert({"username": username, "password_hash": _hash_pw(password)}).execute()
         return True
     except Exception:
         return _csv_register(username, password)
