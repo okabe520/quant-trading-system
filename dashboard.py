@@ -835,9 +835,9 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
                                                 max_pos or cfg.MAX_POSITIONS)
         return _rebuild_display(exec_msg, use_cache_only=True)
 
-    # auto-load: 页面启动自动联网加载
+    # auto-load: 页面启动用缓存秒出（首次部署无缓存则空跑，用户点"联网回测"拉数据）
     if triggered == "auto-load":
-        use_cache_only = False  # 联网获取最新数据
+        use_cache_only = True
     elif triggered == "btn-cache":
         use_cache_only = True
     else:
