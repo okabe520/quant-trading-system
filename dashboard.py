@@ -31,6 +31,7 @@ import numpy as np
 
 import config as cfg
 from data import fetch_stock_pool, build_panel, load_from_cache
+import supabase_client as db
 from factors import compute_all_factors
 from strategy import normalize_factors, generate_signals, get_target_weights
 from backtest import BacktestEngine
@@ -649,7 +650,29 @@ STOCK_OPTIONS = [{"label": s, "value": s} for s in cfg.STOCK_POOL]
 
 app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}, children=[
     dcc.Location(id="url", refresh=False),
-    dcc.Interval(id="auto-load", interval=500, max_intervals=1),  # 页面启动触发一次
+    dcc.Interval(id="auto-load", interval=500, max_intervals=1),
+
+    html.Div(id="login-overlay", style={
+        "position": "fixed", "top": 0, "left": 0, "width": "100%", "height": "100%",
+        "zIndex": 9999, "backgroundColor": "#111318",
+        "display": "flex", "justifyContent": "center", "alignItems": "center", "flexDirection": "column",
+    }, children=[
+        html.H1("量化多因子策略系统", style={"color": "#45df7e", "fontSize": "1.5rem"}),
+        html.P("登录或注册", style={"color": "#777", "fontSize": "0.9rem", "marginBottom": "16px"}),
+        dcc.Input(id="login-user", type="text", placeholder="用户名",
+                  style={"padding": "8px 14px", "backgroundColor": "#1a1d23", "color": "#ccc",
+                         "border": "1px solid #2a2d33", "borderRadius": "4px",
+                         "fontSize": "1rem", "width": "200px", "textAlign": "center", "marginBottom": "8px"}),
+        dcc.Input(id="login-pw", type="text", placeholder="密码",
+                  style={"padding": "8px 14px", "backgroundColor": "#1a1d23", "color": "#ccc",
+                         "border": "1px solid #2a2d33", "borderRadius": "4px",
+                         "fontSize": "1rem", "width": "200px", "textAlign": "center", "marginBottom": "10px"}),
+        html.Div([
+            dbc.Button("登录", id="btn-login", color="success", style={"width": "95px", "marginRight": "10px"}),
+            dbc.Button("注册", id="btn-register", color="primary", style={"width": "95px"}),
+        ]),
+        html.Div(id="login-msg", style={"color": "#dc3545", "fontSize": "0.8rem", "marginTop": "8px"}),
+    ]),
 
     # ---- 顶栏 ----
     html.Div([
@@ -1138,3 +1161,61 @@ def _rebuild_display(status_msg, use_cache_only=False):
         table = html.P("暂无交易记录", style={"color": "#666", "textAlign": "center"})
 
     return msg, hint, today_plan, kpi, fig_eq, fig_dd, fig_heat, fig_factor, table
+
+
+# ======== 登录/退出 ========
+@app.callback(
+    [Output("login-overlay", "style"),
+     Output("login-msg", "children")],
+    [Input("btn-login", "n_clicks"),
+     Input("btn-register", "n_clicks")],
+    [State("login-user", "value"),
+     State("login-pw", "value")],
+)
+def handle_auth(n_login, n_register, user, pw):
+    ctx = callback_context
+    t = ctx.triggered_id
+    if t is None:
+        return dash.no_update, ""
+    if not user or not user.strip():
+        return dash.no_update, "请输入用户名"
+    if not pw or len(pw) < 4:
+        return dash.no_update, "密码至少4位"
+    u = user.strip()
+    if t == "btn-register" and n_register:
+        if db is not None:
+            if hasattr(db, 'register_user'):
+                if db.user_exists(u):
+                    return dash.no_update, "用户已存在"
+                db.register_user(u, pw)
+                return {"display": "none"}, "注册成功"
+            else:
+                return dash.no_update, "注册功能不可用"
+        return dash.no_update, "数据库不可用"
+    if t == "btn-login" and n_login:
+        if db is not None:
+            if hasattr(db, 'user_exists'):
+                if not db.user_exists(u):
+                    return dash.no_update, "用户不存在，请先注册"
+                if db.verify_login(u, pw):
+                    return {"display": "none"}, ""
+                return dash.no_update, "密码错误"
+            else:
+                if db.verify_login("admin", pw):
+                    return {"display": "none"}, ""
+                return dash.no_update, "密码错误"
+        return dash.no_update, "数据库不可用"
+    return dash.no_update, ""
+
+
+@app.callback(
+    Output("login-overlay", "style", allow_duplicate=True),
+    [Input("btn-logout", "n_clicks")],
+    prevent_initial_call=True,
+)
+def handle_logout(n):
+    return {
+        "position": "fixed", "top": 0, "left": 0, "width": "100%", "height": "100%",
+        "zIndex": 9999, "backgroundColor": "#111318",
+        "display": "flex", "justifyContent": "center", "alignItems": "center", "flexDirection": "column",
+    }
