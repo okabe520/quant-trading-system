@@ -60,6 +60,11 @@ def compute_macd(close: pd.DataFrame, fast=12, slow=26, signal=9) -> dict:
     return {"dif": dif, "dea": dea, "macd_hist": histogram}
 
 
+def compute_reversal(close: pd.DataFrame, lookback: int) -> pd.DataFrame:
+    """短期反转因子: 负的N日收益率（做多昨日下跌的股票）"""
+    return -close.pct_change(lookback)
+
+
 def compute_all_factors(data_dict: dict, factor_config: dict = None) -> dict:
     """批量计算全部因子，返回 {factor_name: DataFrame}"""
     import config as cfg
@@ -88,6 +93,11 @@ def compute_all_factors(data_dict: dict, factor_config: dict = None) -> dict:
             factors[name] = compute_ma_deviation(close_panel, lb)
         elif ftype == "bollinger":
             factors[name] = compute_bollinger_position(close_panel, lb)
+        elif ftype == "macd":
+            macd_dict = compute_macd(close_panel)
+            factors[name] = macd_dict["macd_hist"]
+        elif ftype == "reversal":
+            factors[name] = compute_reversal(close_panel, lb)
 
     return factors
 

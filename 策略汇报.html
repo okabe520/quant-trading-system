@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>量化多因子策略回测系统 — 策略详解汇报</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d28;
+    --border: #2a2d3a;
+    --text: #e1e4ed;
+    --muted: #8b8fa8;
+    --accent: #5b9bd5;
+    --green: #4caf93;
+    --red: #e0556a;
+    --orange: #e8a960;
+    --purple: #b392f0;
+    --cyan: #56b6c2;
+    --tag-bg: #232738;
+    --code-bg: #161822;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.75;
+    font-size: 15px;
+  }
+
+  /* ── Hero ─────────────────────────────── */
+  .hero {
+    background: linear-gradient(135deg, #1a1f35 0%, #1a1d28 50%, #1a1f30 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 60px 0 50px;
+    text-align: center;
+  }
+  .hero h1 { font-size: 2.4em; font-weight: 700; letter-spacing: .02em; margin-bottom: 6px; }
+  .hero .sub { color: var(--muted); font-size: 1.05em; }
+  .hero .badges { margin-top: 18px; display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
+  .badge {
+    display: inline-block; padding: 4px 14px; border-radius: 20px;
+    font-size: .82em; font-weight: 600;
+    background: var(--tag-bg); border: 1px solid var(--border);
+  }
+  .badge.accent { border-color: var(--accent); color: var(--accent); }
+  .badge.green  { border-color: var(--green);  color: var(--green); }
+  .badge.purple { border-color: var(--purple); color: var(--purple); }
+  .badge.orange { border-color: var(--orange); color: var(--orange); }
+
+  /* ── Container ─────────────────────────── */
+  .container { max-width: 1000px; margin: 0 auto; padding: 40px 24px 80px; }
+
+  /* ── Section ───────────────────────────── */
+  section { margin-bottom: 48px; }
+  h2 {
+    font-size: 1.55em; font-weight: 700; margin-bottom: 20px;
+    padding-bottom: 10px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 10px;
+  }
+  h2 .num {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; border-radius: 8px;
+    background: var(--accent); color: #fff; font-size: .7em; font-weight: 800;
+    flex-shrink: 0;
+  }
+  h3 {
+    font-size: 1.2em; font-weight: 600; margin: 28px 0 12px;
+    color: var(--accent);
+  }
+  p { margin-bottom: 14px; color: #c8ccd8; }
+  p strong { color: var(--text); }
+
+  /* ── Card ──────────────────────────────── */
+  .card {
+    background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 24px 28px; margin-bottom: 20px;
+  }
+  .card h4 { font-size: 1em; font-weight: 700; margin-bottom: 10px; }
+
+  /* ── Table ─────────────────────────────── */
+  .table-wrap { overflow-x: auto; margin: 16px 0; }
+  table {
+    width: 100%; border-collapse: collapse; font-size: .92em;
+  }
+  th, td {
+    text-align: left; padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  th { background: var(--tag-bg); color: var(--muted); font-weight: 600; font-size: .83em; text-transform: uppercase; letter-spacing: .05em; }
+  td { color: #c8ccd8; }
+  tr:last-child td { border-bottom: none; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  /* ── Factor Tag ────────────────────────── */
+  .ftag {
+    display: inline-block; padding: 2px 10px; border-radius: 4px;
+    font-size: .8em; font-weight: 700; margin-right: 4px;
+  }
+  .ftag.mom { background: #1e3a5f; color: #7bb5f0; }
+  .ftag.vol { background: #3d1f2e; color: #f07b8f; }
+  .ftag.liq { background: #2d3d1f; color: #8fd07b; }
+  .ftag.tech { background: #2e1f3d; color: #c09bf0; }
+
+  /* ── Formula ───────────────────────────── */
+  .formula {
+    background: var(--code-bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 14px 20px; margin: 10px 0;
+    font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+    font-size: .88em; color: var(--cyan); overflow-x: auto;
+  }
+
+  /* ── Flow ──────────────────────────────── */
+  .flow {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    margin: 16px 0; font-size: .88em;
+  }
+  .flow .step {
+    background: var(--tag-bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 16px; white-space: nowrap;
+    font-weight: 600;
+  }
+  .flow .arrow { color: var(--muted); font-size: 1.1em; }
+
+  /* ── Callout ───────────────────────────── */
+  .callout {
+    border-left: 3px solid var(--accent); padding: 12px 18px;
+    margin: 16px 0; background: rgba(91,155,213,.06);
+    border-radius: 0 6px 6px 0; font-size: .92em; color: #b8c4d8;
+  }
+  .callout.warn  { border-color: var(--orange); background: rgba(232,169,96,.06); }
+  .callout.info  { border-color: var(--cyan);   background: rgba(86,182,194,.06); }
+  .callout.good  { border-color: var(--green);  background: rgba(76,175,147,.06); }
+
+  /* ── Code ──────────────────────────────── */
+  code {
+    background: var(--code-bg); padding: 1px 7px; border-radius: 3px;
+    font-family: "Cascadia Code", "Fira Code", "JetBrains Mono", monospace;
+    font-size: .88em; color: var(--orange);
+  }
+
+  /* ── Footer ────────────────────────────── */
+  .footer {
+    text-align: center; color: var(--muted); font-size: .82em;
+    margin-top: 60px; padding-top: 30px; border-top: 1px solid var(--border);
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!--  HER0                                           -->
+<!-- ═══════════════════════════════════════════════ -->
+<div class="hero">
+  <h1>量化多因子策略回测系统</h1>
+  <div class="sub">A股日频多因子选股 · 完整策略汇报</div>
+  <div class="badges">
+    <span class="badge accent">多因子</span>
+    <span class="badge green">截面排名</span>
+    <span class="badge purple">等权配置</span>
+    <span class="badge orange">每日调仓</span>
+    <span class="badge">纯多头</span>
+  </div>
+</div>
+
+<div class="container">
+
+<!-- ═══════════════════════════════════════════════ -->
+<!--  1. 总览                                        -->
+<!-- ═══════════════════════════════════════════════ -->
+<section>
+  <h2><span class="num">1</span> 策略总览</h2>
+
+  <div class="card">
+    <h4>一句话概括</h4>
+    <p>本系统是一个<strong>基于A股日频数据的量化多因子选股回测平台</strong>。在每个交易日，对股票池内所有股票的10个原始因子进行截面z-score标准化，按预设权重加权求和形成<strong>综合得分</strong>，选出得分最高的N只股票等权重配置，每日调仓，纯多头交易。</p>
+  </div>
+
+  <h3>策略流水线</h3>
+  <div class="flow">
+    <div class="step">数据获取</div><span class="arrow">→</span>
+    <div class="step">因子计算<br><small>10个原始因子</small></div><span class="arrow">→</span>
+    <div class="step">截面标准化<br><small>z-score × 权重</small></div><span class="arrow">→</span>
+    <div class="step">信号生成<br><small>Top-N 选股</small></div><span class="arrow">→</span>
+    <div class="step">等权分配</div><span class="arrow">→</span>
+    <div class="step">回测引擎<br><small>日频模拟</small></div><span class="arrow">→</span>
+    <div class="step">绩效评估</div>
+  </div>
+
+  <h3>关键参数一览</h3>
+  <div class="table-wrap">
+  <table>
+    <tr><th>参数</th><th>值</th><th>说明</th></tr>
+    <tr><td>股票池</td><td>20 只沪深大市值股票</td><td>平安银行、万科A、五粮液、海康威视、宁德时代、浦发银行、招商银行、恒瑞医药、贵州茅台、海螺水泥、伊利股份、中国平安、美的集团、格力电器、比亚迪、东方财富、长江电力、兴业银行、山西汾酒、药明康德</td></tr>
+    <tr><td>基准指数</td><td>沪深300（000300）</td><td>用于相对收益比较</td></tr>
+    <tr><td>回测区间</td><td>2023-01-01 ~ 2026-05-28</td><td>覆盖约 3.4 年</td></tr>
+    <tr><td>最大持仓数</td><td>8 只（可调范围 3~15）</td><td>每日最多持有的股票数量</td></tr>
+    <tr><td>信号阈值</td><td>综合得分 > 0</td><td>仅买入得分为正的股票</td></tr>
+    <tr><td>初始资金</td><td>1,000,000 元</td><td>—</td></tr>
+    <tr><td>手续费（佣金）</td><td>0.03%（万三）</td><td>买卖均收取</td></tr>
+    <tr><td>滑点</td><td>0.01%</td><td>模拟成交价偏移</td></tr>
+    <tr><td>印花税</td><td>0.1%（千一）</td><td>仅卖出收取</td></tr>
+    <tr><td>无风险利率</td><td>2%</td><td>用于夏普比率计算</td></tr>
+  </table>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!--  2. 因子体系                                    -->
+<!-- ═══════════════════════════════════════════════ -->
+<section>
+  <h2><span class="num">2</span> 因子体系详解</h2>
+
+  <p>本策略共使用<strong>10个原始因子</strong>，覆盖六大类别。每个因子在每日截面上独立计算，对所有股票进行 z-score 标准化后按权重合成。以下逐一解释每个因子的经济含义和计算方式。</p>
+
+  <div class="table-wrap">
+  <table>
+    <thead>
+    <tr>
+      <th>类别</th><th>因子名称</th><th>回看期</th><th>原始权重</th><th>权重方向</th>
+    </tr>
+    </thead>
+    <tbody>
+    <tr><td><span class="ftag mom">动量</span></td><td>momentum_5</td><td class="num">5 天</td><td class="num">+0.10</td><td>做多</td></tr>
+    <tr><td><span class="ftag mom">动量</span></td><td>momentum_10</td><td class="num">10 天</td><td class="num">+0.10</td><td>做多</td></tr>
+    <tr><td><span class="ftag mom">动量</span></td><td>momentum_20</td><td class="num">20 天</td><td class="num">+0.15</td><td>做多</td></tr>
+    <tr><td><span class="ftag vol">波动率</span></td><td>volatility_10</td><td class="num">10 天</td><td class="num">-0.10</td><td><span style="color:var(--red)">做空（低波溢价）</span></td></tr>
+    <tr><td><span class="ftag vol">波动率</span></td><td>volatility_20</td><td class="num">20 天</td><td class="num">-0.05</td><td><span style="color:var(--red)">做空（低波溢价）</span></td></tr>
+    <tr><td><span class="ftag liq">成交量</span></td><td>volume_ratio_5</td><td class="num">5 天</td><td class="num">+0.10</td><td>做多</td></tr>
+    <tr><td><span class="ftag liq">成交量</span></td><td>volume_ratio_20</td><td class="num">20 天</td><td class="num">+0.05</td><td>做多</td></tr>
+    <tr><td><span class="ftag tech">技术</span></td><td>rsi_14</td><td class="num">14 天</td><td class="num">+0.10</td><td>做多</td></tr>
+    <tr><td><span class="ftag tech">技术</span></td><td>ma_deviation_20</td><td class="num">20 天</td><td class="num">+0.10</td><td>做多</td></tr>
+    <tr><td><span class="ftag tech">技术</span></td><td>bb_position</td><td class="num">20 天</td><td class="num">+0.15</td><td>做多</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <!-- 动量因子 -->
+  <h3>2.1 动量因子（Momentum）</h3>
+  <div class="card">
+    <h4>经济学逻辑</h4>
+    <p>动量效应是学术界验证最稳健的市场异象之一——过去表现优异的股票倾向于在未来继续跑赢。Jegadeesh & Titman (1993) 首次系统证明了 3~12 个月动量策略在美国市场显著有效。在A股市场，由于交易者结构偏散户、信息扩散较慢，<strong>中期动量（1~3 个月）更为显著</strong>，而短期反转效应也存在。</p>
+    <p>本策略使用多周期动量（5/10/20日）的加权组合，形成<span style="color:var(--accent)">动量强度频谱</span>——既捕捉短线趋势，也捕捉中线惯性。20日动量权重最高（+0.15），体现了对中期趋势的侧重。</p>
+
+    <div class="formula">
+      momentum_N  =  (当日收盘价 - N日前收盘价) / N日前收盘价<br>
+      =  close.pct_change(N)
+    </div>
+  </div>
+
+  <!-- 波动率因子 -->
+  <h3>2.2 波动率因子（Volatility）— 负权重</h3>
+  <div class="card">
+    <h4>经济学逻辑</h4>
+    <p>低波动率异象（Low-Volatility Anomaly）是继CAPM之后最重要的实证发现之一。Ang et al. (2006) 发现高特质波动率股票的后续收益反而更低。在A股市场，这一效应同样显著——散户投资者普遍追逐高波动"彩票型"股票，导致其定价过高；而机构偏好的低波动蓝筹股反而获得超额收益。</p>
+    <p>本策略对<strong>波动率因子赋予负权重（-0.10 和 -0.05）</strong>，意味着系统<strong>偏好低波动率的股票</strong>。这是通过负权重实现的——波动率越高的股票 z-score 越大，乘以负权重后将<strong>压低</strong>综合得分，从而降低被选中的概率。</p>
+
+    <div class="formula">
+      volatility_N  =  日收益率滚动N日标准差 × √252<br>
+      （年化波动率）
+    </div>
+  </div>
+
+  <!-- 成交量因子 -->
+  <h3>2.3 成交量比率（Volume Ratio）</h3>
+  <div class="card">
+    <h4>经济学逻辑</h4>
+    <p>成交量是市场关注度和资金流向的代理变量。量比大于1意味着当日成交活跃度超过近期均值，通常伴随信息冲击或主力资金介入。本策略将量比视为<strong>正向因子</strong>——放量上涨的股票往往具有更强的短期动能。两个周期（5日/20日）分别捕捉短期和中期资金关注度变化。</p>
+
+    <div class="formula">
+      volume_ratio_N  =  当日成交量 / N日均成交量
+    </div>
+  </div>
+
+  <!-- RSI -->
+  <h3>2.4 相对强弱指标（RSI）</h3>
+  <div class="card">
+    <h4>经济学逻辑</h4>
+    <p>RSI是衡量价格变化速度的动量振荡器。传统用法中，RSI > 70 为超买（应卖出），RSI &lt; 30 为超卖（应买入）。但本策略将RSI作为<strong>正权重趋势因子</strong>——RSI越高越偏好——这与动量因子的方向一致。策略预期处于上升趋势中的股票即使RSI偏高，仍可持续上涨（趋势延续而非反转）。</p>
+
+    <div class="formula">
+      RSI  =  100 - 100 / (1 + RS)<br>
+      其中  RS  =  N日内平均涨幅 / N日内平均跌幅
+    </div>
+  </div>
+
+  <!-- 均线偏离 -->
+  <h3>2.5 均线偏离（MA Deviation）</h3>
+  <div class="card">
+    <h4>经济学逻辑</h4>
+    <p>价格相对于移动平均线的偏离度，衡量了<strong>短期价格与中期趋势基准</strong>的关系。正偏离（价格 > MA）表示股价处于上升通道，趋势偏强。完全基于均值回复的策略会做空正偏离，但本策略结合了趋势和均值回复，仅给予+0.10的温和正权重。</p>
+
+    <div class="formula">
+      MA_deviation_20  =  (收盘价 - MA20) / MA20
+    </div>
+  </div>
+
+  <!-- 布林带 -->
+  <h3>2.6 布林带位置（Bollinger Band Position）</h3>
+  <div class="card">
+    <h4>经济学逻辑</h4>
+    <p>布林带位置衡量股价在布林带内的相对位置（0=下轨，0.5=中轨，1=上轨）。这是本策略中<strong>权重最高的单因子（+0.15）</strong>。正值权重意味着偏好在布林带上轨附近的股票——这些股票处于强势区，通常是趋势加速启动的阶段。这与"强势股恒强"的逻辑一致。</p>
+
+    <div class="formula">
+      BB_upper   = MA20 + 2 × 标准差<br>
+      BB_lower   = MA20 - 2 × 标准差<br>
+      BB_position = (收盘价 - BB_lower) / (BB_upper - BB_lower)<br>
+      <span style="color:var(--muted)">理论取值范围 [0, 1]</span>
+    </div>
+  </div>
+
+  <h3>因子权重分配逻辑</h3>
+  <div class="callout info">
+    <strong>权重总和 = 1.0</strong>（正权重 0.85 + |负权重| 0.15）<br>
+    <strong>动量类总权重：</strong>0.35（momentum_5: 0.10 + momentum_10: 0.10 + momentum_20: 0.15）<br>
+    <strong>低波类总权重：</strong>0.15（volatility_10: -0.10 + volatility_20: -0.05）<br>
+    <strong>量价类总权重：</strong>0.15（volume_ratio 系列）<br>
+    <strong>技术类总权重：</strong>0.35（RSI + MA偏离 + 布林带位置）<br>
+    ⇒ 策略核心 = <strong>动量（35%）+ 趋势强度（35%）+ 低波动率（15%）+ 流动性（15%）</strong>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!--  3. 因子合成与信号生成                           -->
+<!-- ═══════════════════════════════════════════════ -->
+<section>
+  <h2><span class="num">3</span> 因子合成与信号生成机制</h2>
+
+  <h3>3.1 截面 z-score 标准化</h3>
+  <div class="card">
+    <p>对于每个交易日 t，对每个因子的N只股票取值做截面标准化：</p>
+    <div class="formula">
+      z-score(i,f,t) = (value(i,f,t) - mean(f,t)) / std(f,t)
+    </div>
+    <p><strong>为什么要截面标准化？</strong></p>
+    <ul style="margin-left:20px; color:#c8ccd8;">
+      <li>不同因子的量纲不同（收益率是百分比，波动率是百分比，量比是无量纲比值），截面z-score使它们在同一尺度上可比。</li>
+      <li>z-score 本质上是"该股票在该因子上比同行强/弱了几个标准差"——衡量<strong>相对强弱</strong>而非绝对水平。</li>
+      <li>如果某日所有股票的某一因子值完全相同，std = 0，则 z-score 设为 0（该因子该日不提供信息）。</li>
+    </ul>
+  </div>
+
+  <h3>3.2 Winsorize 截尾处理</h3>
+  <div class="card">
+    <p>标准化后的因子值被<strong>截断至 [-3, 3]</strong>：</p>
+    <div class="formula">
+      z*  =  clip(z, -3.0, 3.0)
+    </div>
+    <p>这防止了个别股票因极端因子值而<strong>过度主导</strong>综合得分。3σ 以外的值被认为是"噪声"而非有效信号。</p>
+  </div>
+
+  <h3>3.3 综合得分计算</h3>
+  <div class="card">
+    <p>对每只股票 i 在交易日 t，综合得分为所有因子 z-score 的加权和：</p>
+    <div class="formula">
+      Score(i,t) = Σ w<sub>f</sub> × z*(i,f,t)<br>
+      = 0.10×z_mom5 + 0.10×z_mom10 + 0.15×z_mom20<br>
+      &nbsp;&nbsp;- 0.10×z_vol10 - 0.05×z_vol20<br>
+      &nbsp;&nbsp;+ 0.10×z_volratio5 + 0.05×z_volratio20<br>
+      &nbsp;&nbsp;+ 0.10×z_rsi + 0.10×z_madev + 0.15×z_bbpos
+    </div>
+    <p>某个因子得分较高意味着：</p>
+    <ul style="margin-left:20px; color:#c8ccd8;">
+      <li><strong>动量因子高</strong> → 近期涨幅大 → 综合得分 ↑</li>
+      <li><strong>波动率因子高</strong> → 波动大 → 综合得分 ↓（因为权重为负）</li>
+      <li><strong>量比高</strong> → 放量 → 综合得分 ↑</li>
+      <li><strong>RSI高</strong>、<strong>价格在布林带上轨</strong> → 强势 → 综合得分 ↑</li>
+    </ul>
+  </div>
+
+  <h3>3.4 信号生成与选股</h3>
+  <div class="card">
+    <p>每个交易日，选股逻辑为：</p>
+    <ol style="margin-left:20px; color:#c8ccd8;">
+      <li>将所有股票按综合得分从高到低排序</li>
+      <li>选取得分最高的 <code>max_positions</code>（默认8）只股票</li>
+      <li><strong>附加条件：</strong>仅买入得分 > 0 的股票（得分 ≤ 0 的股票即使排名靠前也不会买入）</li>
+      <li>信号值 = 1（买入/持有），否则 = 0</li>
+    </ol>
+    <div class="callout warn">
+      <strong>重要特性：</strong>实际持仓数量<strong>并非固定</strong>。如果少于N只股票得分 > 0，则当日只持有这些股票，可能低至0只（空仓）。这提供了隐含的市场下行保护——当整体市场走弱时，多数股票因子得分转负，系统自动减仓甚至空仓。
+    </div>
+  </div>
+
+  <h3>3.5 目标权重分配</h3>
+  <div class="card">
+    <p>对选出的K只股票，采用最简单的分配方式：</p>
+    <div class="formula">
+      w<sub>i</sub> = 1 / K &nbsp;&nbsp;（等权重）
+    </div>
+    <p>没有使用风险平价、波动率倒数加权、最小方差等更复杂的组合优化方法。这保持了策略的透明性和可解释性，但也意味着如果某只持仓股波动率极高，它将与波动率最低的持仓股承担相同的权重。</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!--  4. 回测引擎                                    -->
+<!-- ═══════════════════════════════════════════════ -->
+<section>
+  <h2><span class="num">4</span> 回测引擎设计</h2>
+
+  <h3>4.1 日频模拟交易循环</h3>
+  <div class="card">
+    <p>回测引擎按交易日逐日遍历，执行以下步骤：</p>
+    <ol style="margin-left:20px; color:#c8ccd8;">
+      <li><strong>估值</strong>：按当日收盘价计算当前组合总市值（持仓市值 + 现金）</li>
+      <li><strong>获取目标</strong>：读取该日目标权重矩阵</li>
+      <li><strong>卖出</strong>：计算每只持仓股需卖出的数量，<strong>先卖</strong>以释放现金</li>
+      <li><strong>买入</strong>：用可用现金（最多 99%）按目标权重买入</li>
+      <li><strong>记录</strong>：保存当日持仓、现金和总权益</li>
+    </ol>
+  </div>
+
+  <h3>4.2 交易约束与成本模型</h3>
+  <div class="table-wrap">
+  <table>
+    <tr><th>约束/成本</th><th>规则</th><th>说明</th></tr>
+    <tr>
+      <td>整手交易</td>
+      <td>买入/卖出股数向下取整至 100 股的整数倍</td>
+      <td>A股最小交易单位为 1 手 = 100 股，不可买卖零股</td>
+    </tr>
+    <tr>
+      <td>滑点</td>
+      <td>卖出价 = 收盘价 × (1 - 0.01%)<br>买入价 = 收盘价 × (1 + 0.01%)</td>
+      <td>模拟市场冲击成本和买卖价差（bid-ask spread）</td>
+    </tr>
+    <tr>
+      <td>佣金</td>
+      <td>成交金额 × 0.03%（万三），买卖双向</td>
+      <td>行业标准费率</td>
+    </tr>
+    <tr>
+      <td>印花税</td>
+      <td>卖出金额 × 0.1%（千一），仅卖出</td>
+      <td>A股法定印花税，2023年8月后降至千一</td>
+    </tr>
+    <tr>
+      <td>现金约束</td>
+      <td>买入金额 ≤ 可用现金 × 0.99</td>
+      <td>预留 1% 缓冲，防止因取整和价格波动导致的超买</td>
+    </tr>
+  </table>
+  </div>
+
+  <div class="callout warn">
+    <strong>已知局限（前瞻偏差）：</strong>回测在每日调仓时使用<strong>当日收盘价</strong>计算并成交，这在实盘中不可实现（当日收盘价在收盘后才确定，无法在盘中以收盘价下单）。这意味着回测收益可能<strong>被高估</strong>。实盘替代方案应使用次日开盘价或VWAP执行。
+  </div>
+
+  <h3>4.3 绩效指标体系</h3>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>指标</th><th>公式</th><th>含义</th></tr></thead>
+    <tbody>
+    <tr>
+      <td><strong>累计收益率</strong></td>
+      <td class="num"><code>期末净值/期初净值 - 1</code></td>
+      <td>回测期间总收益</td>
+    </tr>
+    <tr>
+      <td><strong>年化收益率（CAGR）</strong></td>
+      <td class="num"><code>(1+R_total)^(1/Y) - 1</code></td>
+      <td>几何平均年化回报</td>
+    </tr>
+    <tr>
+      <td><strong>年化波动率</strong></td>
+      <td class="num"><code>日收益率标准差 × √252</code></td>
+      <td>风险度量</td>
+    </tr>
+    <tr>
+      <td><strong>夏普比率</strong></td>
+      <td class="num"><code>(CAGR - 2%) / 年化波动率</code></td>
+      <td>单位风险的超额回报（无风险利率 = 2%）</td>
+    </tr>
+    <tr>
+      <td><strong>最大回撤</strong></td>
+      <td class="num"><code>min(累计净值/历史最高 - 1)</code></td>
+      <td>峰谷最大亏损幅度</td>
+    </tr>
+    <tr>
+      <td><strong>胜率</strong></td>
+      <td class="num"><code>正收益天数 / 非零收益天数</code></td>
+      <td>日频胜率</td>
+    </tr>
+    <tr>
+      <td><strong>盈亏比</strong></td>
+      <td class="num"><code>平均盈利 / |平均亏损|</code></td>
+      <td>平均盈利与平均亏损之比</td>
+    </tr>
+    <tr>
+      <td><strong>卡尔玛比率</strong></td>
+      <td class="num"><code>CAGR / |最大回撤|</code></td>
+      <td>收益与最大回撤的比值</td>
+    </tr>
+    <tr>
+      <td><strong>日均换手额</strong></td>
+      <td class="num"><code>日均买入金额</code></td>
+      <td>衡量交易活跃度和调仓幅度</td>
+    </tr>
+    <tr>
+      <td><strong>总交易笔数</strong></td>
+      <td class="num"><code>买卖信号触发总数</code></td>
+      <td>评估交易频率</td>
+    </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!--  5. DASHBOARD 仪表盘                            -->
+<!-- ═══════════════════════════════════════════════ -->
+<section>
+  <h2><span class="num">5</span> Dash 交互仪表盘</h2>
+
+  <p>系统提供了一个基于 <strong>Plotly Dash</strong> 的Web交互界面，包含以下核心功能模块：</p>
+
+  <div class="card">
+    <h4>7个核心图表</h4>
+    <table>
+      <tr><th>图表</th><th>类型</th><th>展示内容</th></tr>
+      <tr><td>权益曲线</td><td>折线图</td><td>策略净值 vs 基准（沪深300）净值，归一化对比</td></tr>
+      <tr><td>回撤曲线</td><td>面积图</td><td>每日回撤百分比，直观展示风险时期</td></tr>
+      <tr><td>持仓热力图</td><td>热力图</td><td>时间×股票矩阵，二值化显示每日持仓情况</td></tr>
+      <tr><td>因子得分</td><td>横向柱状图</td><td>最新日期各股票的截面综合得分排名</td></tr>
+      <tr><td>交易记录</td><td>数据表格</td><td>最近50笔交易的详细信息</td></tr>
+      <tr><td>绩效指标</td><td>数值卡片</td><td>CAGR、夏普比率、最大回撤、胜率等关键数字</td></tr>
+      <tr><td>今日操作建议</td><td>表格+盈亏追踪</td><td>基于最新数据的选股建议及历史推荐表现</td></tr>
+    </table>
+  </div>
+
+  <h3>可调参数控件</h3>
+  <ul style="margin-left:20px; color:#c8ccd8;">
+    <li><strong>股票选择器：</strong>多选下拉框，可自定义股票池子集</li>
+    <li><strong>日期范围：</strong>自由设定回测起止日期</li>
+    <li><strong>最大持仓数：</strong>滑块 3~15 只，控制持仓集中度</li>
+    <li><strong>初始资金：</strong>默认可调</li>
+    <li><strong>一键运行：</strong>缓存加载模式 + 联网重新获取模式</li>
+  </ul>
+</section>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!--  6. 策略逻辑总结                                -->
+<!-- ═══════════════════════════════════════════════ -->
+<section>
+  <h2><span class="num">6</span> 策略核心理念总结</h2>
+
+  <div class="card">
+    <h4>策略的四维逻辑</h4>
+
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:16px;">
+      <div style="border:1px solid var(--border); border-radius:8px; padding:16px; border-left:3px solid var(--accent);">
+        <h4 style="margin-bottom:6px; color:var(--accent);">趋势跟踪 (0.35)</h4>
+        <p style="font-size:.9em; margin:0;">买入近期涨幅最大的股票。认为上涨趋势具有持续性——"让赢家继续跑"（Let winners run）。三重动量周期覆盖短期到中期。</p>
+      </div>
+      <div style="border:1px solid var(--border); border-radius:8px; padding:16px; border-left:3px solid var(--green);">
+        <h4 style="margin-bottom:6px; color:var(--green);">低波动率溢价 (0.15)</h4>
+        <p style="font-size:.9em; margin:0;">回避高波动率的"彩票型"股票，偏爱低波动稳健品种。利用市场对高波动股票的过度定价套利。</p>
+      </div>
+      <div style="border:1px solid var(--border); border-radius:8px; padding:16px; border-left:3px solid var(--orange);">
+        <h4 style="margin-bottom:6px; color:var(--orange);">资金关注度 (0.15)</h4>
+        <p style="font-size:.9em; margin:0;">量比为信号捕捉市场关注度的变化。放量意味着信息冲击和资金介入——"量在价先"。</p>
+      </div>
+      <div style="border:1px solid var(--border); border-radius:8px; padding:16px; border-left:3px solid var(--purple);">
+        <h4 style="margin-bottom:6px; color:var(--purple);">强势确认 (0.35)</h4>
+        <p style="font-size:.9em; margin:0;">RSI + 均线偏离 + 布林带位置三重确认趋势强度。偏好站上均线、布林带上轨附近的"强势股"。</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="callout good" style="margin-top:20px;">
+    <strong>隐含风控机制：</strong>综合得分 > 0 的过滤条件 + 截面排名机制，使得在市场普跌时自动降低仓位。等权配置避免了单只股票的过度集中风险。每日调仓确保组合始终持有当前最强因子得分的股票。
+  </div>
+
+  <h3 style="margin-top:32px;">策略优劣势分析</h3>
+  <div class="table-wrap">
+  <table>
+    <tr><th style="width:50%">优势</th><th>局限与改进方向</th></tr>
+    <tr>
+      <td>✅ 多因子分散化——不依赖单一信号源</td>
+      <td>⚠️ 仅做多——下跌市只能减仓无法对冲</td>
+    </tr>
+    <tr>
+      <td>✅ 低波动率因子提供防御性</td>
+      <td>⚠️ 前瞻偏差——使用当日收盘价调仓</td>
+    </tr>
+    <tr>
+      <td>✅ 每日调仓适应快速市场变化</td>
+      <td>⚠️ 生存偏差——股票池固定为当前大盘股</td>
+    </tr>
+    <tr>
+      <td>✅ 等权分配简单透明</td>
+      <td>⚠️ 无止损/止盈风险管理机制</td>
+    </tr>
+    <tr>
+      <td>✅ 免费数据源（BaoStock/AKShare），零成本运行</td>
+      <td>⚠️ 等权忽略了个股波动率差异</td>
+    </tr>
+    <tr>
+      <td>✅ Dash仪表盘——可视化丰富、参数可调</td>
+      <td>⚠️ 未利用MACD等已实现但未启用的因子</td>
+    </tr>
+  </table>
+  </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════ -->
+<!--  7. 技术架构                                    -->
+<!-- ═══════════════════════════════════════════════ -->
+<section>
+  <h2><span class="num">7</span> 技术架构</h2>
+
+  <div class="table-wrap">
+  <table>
+    <tr><th>模块</th><th>文件</th><th>职责</th></tr>
+    <tr><td>入口</td><td><code>main.py</code></td><td>启动 Dash Web 服务器</td></tr>
+    <tr><td>配置</td><td><code>config.py</code></td><td>集中式参数（股票池、因子定义及权重、回测参数）</td></tr>
+    <tr><td>数据</td><td><code>data.py</code></td><td>BaoStock（主）+ AKShare（备）双数据源，CSV磁盘缓存</td></tr>
+    <tr><td>因子</td><td><code>factors.py</code></td><td>10个原始因子计算引擎 + 批量调度</td></tr>
+    <tr><td>策略</td><td><code>strategy.py</code></td><td>截面z-score标准化、因子加权合成、信号生成、等权分配</td></tr>
+    <tr><td>回测</td><td><code>backtest.py</code></td><td>日频模拟交易循环 + 绩效指标计算</td></tr>
+    <tr><td>仪表盘</td><td><code>dashboard.py</code></td><td>Plotly Dash 界面 + 7个图表 + 交互控件</td></tr>
+  </table>
+  </div>
+
+  <div class="callout info">
+    <strong>数据源说明：</strong>系统优先使用 <strong>BaoStock</strong>（证券宝）获取A股日频历史行情，数据字段包括开高低收、成交量、成交额、换手率、涨跌幅。BaoStock 返回的数据为<strong>后复权</strong>价格（adjustflag="2"），可正确反映分红送股后的真实收益。当 BaoStock 不可用时，自动切换至 <strong>AKShare</strong> 作为备用源。所有数据缓存在 <code>cache/</code> 目录下，避免重复网络请求。
+  </div>
+</section>
+
+<div class="footer">
+  量化多因子策略回测系统 v1.0 beta · 汇报文档 · 2026-05-29
+</div>
+
+</div>
+</body>
+</html>

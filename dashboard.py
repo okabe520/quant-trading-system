@@ -3,6 +3,15 @@
 """
 
 import os, sys, json, time, traceback
+from datetime import datetime
+
+WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+
+def _today_label():
+    now = datetime.now()
+    wd = WEEKDAY_NAMES[now.weekday()]
+    return f"今天是 {now.strftime('%Y-%m-%d')} {wd}"
 
 # Windows GBK 环境下强制 stdout/stderr 使用 UTF-8
 if sys.platform == 'win32':
@@ -21,7 +30,7 @@ import pandas as pd
 import numpy as np
 
 import config as cfg
-from data import fetch_stock_pool, build_panel
+from data import fetch_stock_pool, build_panel, load_from_cache
 from factors import compute_all_factors
 from strategy import normalize_factors, generate_signals, get_target_weights
 from backtest import BacktestEngine
@@ -219,8 +228,22 @@ def _build_today_plan(composite, close_panel, max_pos, prev_pnl):
             html.Span(f" ({detail_str})", style={"color": "#666", "fontSize": "0.7rem"}),
         ], style={"marginTop": "8px"})
 
+    # 调仓周期提醒
+    invest_df = _load_investment_history()
+    rebalance_hint = ""
+    if not invest_df.empty:
+        holding = invest_df[invest_df["status"] == "holding"]
+        if not holding.empty:
+            exec_date = pd.Timestamp(holding["execute_date"].iloc[0])
+            days_held = (last_date - exec_date).days
+            freq = getattr(cfg, 'REBALANCE_FREQUENCY', 5)
+            if days_held >= freq:
+                rebalance_hint = f" | ⚡ 已持有{days_held}天(周期{freq}天)，建议执行调仓"
+            else:
+                rebalance_hint = f" | 持有{days_held}/{freq}天，距调仓还有{freq-days_held}天"
+
     header_right = html.Span(
-        f"数据日期: {last_date.strftime('%Y-%m-%d')} | 建议持仓: {n}只",
+        f"数据日期: {last_date.strftime('%Y-%m-%d')} | 建议持仓: {n}只{rebalance_hint}",
         style={"color": "#888", "fontSize": "0.72rem", "float": "right"},
     )
 
@@ -336,6 +359,254 @@ def _calc_recommendation_pnl(prev_recs, data_dict):
     return {"pnl": pnl, "prev_date": prev_date, "details": details}
 
 
+# ---------------------------------------------------------------------------
+# 模拟投资跟踪 — 一键执行 + 历史P&L
+# ---------------------------------------------------------------------------
+INVEST_HISTORY_FILE = os.path.join(cfg.CACHE_DIR, "investment_history.csv")
+
+
+def _execute_investment(composite, close_panel, max_pos):
+    """一键执行当前策略：卖出上一轮持仓（结算盈亏），买入新一轮推荐"""
+    if composite is None or composite.empty:
+        return False, "无策略数据"
+
+    last_date = composite.index[-1]
+    row = composite.loc[last_date].dropna()
+    top = row[row > 0].nlargest(max_pos)
+    if top.empty:
+        return False, "当前无符合条件的股票"
+
+    # 加载历史
+    if os.path.exists(INVEST_HISTORY_FILE):
+        df_all = pd.read_csv(INVEST_HISTORY_FILE, dtype={"stock": str})
+    else:
+        df_all = pd.DataFrame()
+
+    # 同一日期不重复执行
+    if not df_all.empty and str(last_date.date()) in df_all[df_all["status"] == "holding"]["execute_date"].values:
+        return False, f"日期 {last_date.date()} 已有执行记录"
+
+    # ── 1. 结算上一轮持仓（用最新收盘价卖出） ──
+    closed_count = 0
+    if not df_all.empty:
+        holding_mask = df_all["status"] == "holding"
+        if holding_mask.any():
+            prev_date = df_all.loc[holding_mask, "execute_date"].iloc[0]
+            for idx in df_all[holding_mask].index:
+                stock = df_all.at[idx, "stock"]
+                entry_price = df_all.at[idx, "entry_price"]
+                if stock in close_panel.columns:
+                    exit_price = float(close_panel.loc[last_date, stock])
+                    if not pd.isna(exit_price) and exit_price > 0 and not pd.isna(entry_price) and entry_price > 0:
+                        ret = round((exit_price / entry_price - 1) * 100, 2)
+                        df_all.at[idx, "exit_price"] = round(exit_price, 2)
+                        df_all.at[idx, "return_pct"] = ret
+                        df_all.at[idx, "status"] = "closed"
+                        df_all.at[idx, "exit_date"] = last_date.strftime("%Y-%m-%d")
+                        closed_count += 1
+            if closed_count > 0:
+                # 计算上一轮加权收益
+                prev_holding = df_all[df_all["execute_date"] == str(prev_date).split()[0][:10]]
+                prev_holding = prev_holding.dropna(subset=["return_pct", "weight"])
+                if not prev_holding.empty:
+                    prev_weighted = round(
+                        (prev_holding["return_pct"] * prev_holding["weight"]).sum() / prev_holding["weight"].sum(), 2
+                    )
+                else:
+                    prev_weighted = 0.0
+                print(f"[INVEST] Closed round {prev_date} ({closed_count} stocks), weighted return: {prev_weighted:+.2f}%")
+
+    # ── 2. 建仓新推荐 ──
+    n = len(top)
+    records = []
+    for stock, score in top.items():
+        price = close_panel.loc[last_date, stock] if stock in close_panel.columns else float("nan")
+        stock_code = f"{int(stock):06d}"
+        records.append({
+            "execute_date": last_date.strftime("%Y-%m-%d"),
+            "stock": stock_code,
+            "name": cfg.STOCK_NAMES.get(stock_code, stock_code),
+            "score": round(float(score), 4),
+            "weight": round(1.0 / n, 4),
+            "entry_price": round(float(price), 2),
+            "exit_price": None,
+            "return_pct": None,
+            "status": "holding",
+        })
+
+    df_new = pd.DataFrame(records)
+    df_all = pd.concat([df_all, df_new], ignore_index=True)
+    df_all.to_csv(INVEST_HISTORY_FILE, index=False)
+
+    msg = f"已执行 {n} 只建仓"
+    if closed_count > 0:
+        msg += f"，上轮已结算({closed_count}只)"
+    print(f"[INVEST] {msg}")
+    return True, msg
+
+
+def _load_investment_history():
+    """加载所有投资历史"""
+    if not os.path.exists(INVEST_HISTORY_FILE):
+        return pd.DataFrame()
+    df = pd.read_csv(INVEST_HISTORY_FILE, parse_dates=["execute_date"], dtype={"stock": str})
+    return df.sort_values("execute_date")
+
+
+def _update_investment_pnl(history_df, data_dict):
+    """用最新价格更新每笔投资的 P&L"""
+    if history_df.empty or not data_dict:
+        return history_df
+
+    for idx, row in history_df.iterrows():
+        if row.get("status") == "closed":
+            continue  # 已结算的不动
+        stock = row["stock"]
+        entry_date = pd.Timestamp(row["execute_date"])
+        entry_price = row["entry_price"]
+        if stock not in data_dict:
+            continue
+        df = data_dict[stock]
+        future = df[df.index > entry_date]
+        if future.empty:
+            continue
+        latest_date = future.index[-1]
+        latest_price = float(future.iloc[-1]["close"])
+        if pd.isna(latest_price) or latest_price <= 0:
+            continue
+        ret = (latest_price / entry_price - 1) * 100
+        days = (latest_date - entry_date).days
+        history_df.at[idx, "exit_price"] = round(latest_price, 2)
+        history_df.at[idx, "return_pct"] = round(ret, 2)
+        history_df.at[idx, "latest_date"] = latest_date.strftime("%Y-%m-%d")
+        history_df.at[idx, "hold_days"] = days
+    return history_df
+
+
+def _build_investment_history_card(history_df):
+    """构建投资历史 UI"""
+    if history_df.empty:
+        return html.Div(
+            "暂无模拟投资记录，点击「一键执行本周策略」开始",
+            style={"color": "#666", "fontSize": "0.8rem", "textAlign": "center", "padding": "20px"},
+        )
+
+    # 按执行日期分组统计
+    dates = history_df["execute_date"].unique()
+    rounds = []
+    for d in sorted(dates, reverse=True):
+        subset = history_df[history_df["execute_date"] == d]
+        n_stocks = len(subset)
+        statuses = subset["status"].unique()
+        is_closed = "closed" in statuses and "holding" not in statuses
+
+        # 加权收益（closed的用数据里的return_pct，holding的用_update_investment_pnl算的）
+        if subset["return_pct"].notna().any() and subset["weight"].notna().any():
+            valid = subset.dropna(subset=["return_pct", "weight"])
+            if not valid.empty:
+                weighted_ret = round((valid["return_pct"] * valid["weight"]).sum() / valid["weight"].sum(), 2)
+            else:
+                weighted_ret = None
+        else:
+            weighted_ret = None
+
+        exit_date = None
+        if is_closed and "exit_date" in subset.columns:
+            exit_vals = subset["exit_date"].dropna()
+            if not exit_vals.empty:
+                exit_date = str(exit_vals.iloc[0])[:10]
+
+        rounds.append({
+            "date": str(d)[:10],
+            "n": n_stocks,
+            "weighted_ret": weighted_ret,
+            "is_closed": is_closed,
+            "exit_date": exit_date,
+            "stocks": subset["name"].tolist(),
+        })
+
+    # 汇总统计（仅已结算的计入累计）
+    closed_rounds = [r for r in rounds if r["is_closed"] and r["weighted_ret"] is not None]
+    total_rounds = len(rounds)
+    win_rounds = sum(1 for r in closed_rounds if r["weighted_ret"] > 0)
+    cum_ret = None
+    if closed_rounds:
+        cum = 1.0
+        for r in closed_rounds:
+            cum *= (1 + r["weighted_ret"] / 100)
+        cum_ret = round((cum - 1) * 100, 2)
+
+    # 汇总卡片
+    stats_cards = dbc.Row([
+        dbc.Col(html.Div([
+            html.Div("累计模拟收益", style={"color": "#888", "fontSize": "0.7rem"}),
+            html.Div(f"{cum_ret:+.2f}%" if cum_ret is not None else "--",
+                     style={"fontWeight": "bold", "fontSize": "1.1rem",
+                            "color": "#45df7e" if (cum_ret or 0) >= 0 else "#dc3545"}),
+        ]), width=3),
+        dbc.Col(html.Div([
+            html.Div("已结算/总轮次", style={"color": "#888", "fontSize": "0.7rem"}),
+            html.Div(f"{len(closed_rounds)}/{total_rounds}",
+                     style={"fontWeight": "bold", "fontSize": "1.1rem", "color": "#ccc"}),
+        ]), width=2),
+        dbc.Col(html.Div([
+            html.Div("胜率(已结算)", style={"color": "#888", "fontSize": "0.7rem"}),
+            html.Div(f"{win_rounds}/{len(closed_rounds)}" if closed_rounds else "--",
+                     style={"fontWeight": "bold", "fontSize": "1.1rem", "color": "#ffc107"}),
+        ]), width=2),
+        dbc.Col(html.Div([
+            html.Div("最佳单轮", style={"color": "#888", "fontSize": "0.7rem"}),
+            html.Div(f"{max(r['weighted_ret'] for r in closed_rounds):+.2f}%" if closed_rounds else "--",
+                     style={"fontWeight": "bold", "fontSize": "1.1rem", "color": "#45df7e"}),
+        ]), width=2),
+        dbc.Col(html.Div([
+            html.Div("最差单轮", style={"color": "#888", "fontSize": "0.7rem"}),
+            html.Div(f"{min(r['weighted_ret'] for r in closed_rounds):+.2f}%" if closed_rounds else "--",
+                     style={"fontWeight": "bold", "fontSize": "1.1rem", "color": "#dc3545"}),
+        ]), width=3),
+    ], className="mb-3", style={"gap": "0"})
+
+    # 历史表格
+    table_rows = []
+    for r in rounds[:30]:
+        if r["is_closed"]:
+            ret_color = "#45df7e" if (r["weighted_ret"] or 0) > 0 else "#dc3545"
+            ret_text = f"{r['weighted_ret']:+.2f}%"
+            status_text = f"已结算({r['exit_date']})" if r["exit_date"] else "已结算"
+            status_color = "#888"
+        else:
+            ret_color = "#888"
+            ret_text = "持有中..."
+            status_text = "持有中"
+            status_color = "#ffc107"
+        stock_tags = ", ".join(r["stocks"][:4])
+        if len(r["stocks"]) > 4:
+            stock_tags += f" +{len(r['stocks'])-4}"
+        table_rows.append(html.Tr([
+            html.Td(r["date"], style={"fontFamily": "monospace", "color": "#aaa", "fontSize": "0.75rem"}),
+            html.Td(str(r["n"]), style={"color": "#ccc", "textAlign": "center", "fontSize": "0.75rem"}),
+            html.Td(stock_tags, style={"color": "#999", "fontSize": "0.72rem", "maxWidth": "220px",
+                                        "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap"}),
+            html.Td(status_text, style={"color": status_color, "fontSize": "0.72rem"}),
+            html.Td(ret_text, style={"color": ret_color, "fontWeight": "bold", "fontFamily": "monospace", "fontSize": "0.78rem"}),
+        ]))
+
+    table = dbc.Table(
+        [html.Thead(html.Tr([
+            html.Th("建仓日", style={"color": "#666", "fontSize": "0.7rem"}),
+            html.Th("只", style={"color": "#666", "fontSize": "0.7rem", "textAlign": "center"}),
+            html.Th("持仓", style={"color": "#666", "fontSize": "0.7rem"}),
+            html.Th("状态", style={"color": "#666", "fontSize": "0.7rem"}),
+            html.Th("收益", style={"color": "#666", "fontSize": "0.7rem"}),
+        ])),
+         html.Tbody(table_rows)],
+        striped=False, bordered=False, hover=True, size="sm",
+        style={"fontSize": "0.78rem", "marginBottom": "0"},
+    )
+
+    return html.Div([stats_cards, table])
+
+
 # ======== Layout ========
 
 def _read_cache_date_range():
@@ -376,16 +647,27 @@ INPUT_STYLE = {
 STOCK_OPTIONS = [{"label": s, "value": s} for s in cfg.STOCK_POOL]
 
 app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}, children=[
+    dcc.Location(id="url", refresh=False),
+    dcc.Interval(id="auto-load", interval=500, max_intervals=1),  # 页面启动触发一次
 
     # ---- 顶栏 ----
     html.Div([
         html.Div([
-            html.H2("量化多因子策略系统",
-                    style={"color": "#45df7e", "margin": "0", "fontSize": "1.4rem"}),
-            html.Span(" | 数据: BaoStock  |  日频  |  动量/波动/量价/RSI/布林",
-                      style={"color": "#777", "fontSize": "0.8rem", "marginLeft": "8px"}),
-        ], style={"display": "flex", "alignItems": "center"}),
-    ], style={"padding": "14px 28px", "backgroundColor": "#16191f", "borderBottom": "1px solid #2a2d33"}),
+            html.Div([
+                html.H2("量化多因子策略系统",
+                        style={"color": "#45df7e", "margin": "0", "fontSize": "1.4rem"}),
+                html.Span(" | 数据: BaoStock  |  日频  |  动量/波动/量价/RSI/布林",
+                          style={"color": "#777", "fontSize": "0.8rem", "marginLeft": "8px"}),
+            ], style={"display": "flex", "alignItems": "center"}),
+        ]),
+        html.Div(id="today-indicator", children=_today_label(), style={
+            "color": "#ffc107", "fontSize": "0.75rem", "padding": "2px 10px",
+            "backgroundColor": "#1a1d23", "border": "1px solid #2a2d33",
+            "borderRadius": "4px", "fontFamily": "monospace",
+        }),
+    ], style={"padding": "14px 28px", "display": "flex", "justifyContent": "space-between",
+              "alignItems": "center", "backgroundColor": "#16191f",
+              "borderBottom": "1px solid #2a2d33"}),
 
     # ---- 控制栏 ----
     html.Div([
@@ -442,10 +724,14 @@ app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}
             dbc.Col([
                 html.Label(" ", style={"fontSize": "0.75rem"}),
                 html.Div([
-                    dbc.Button("缓存加载", id="btn-cache", color="info", size="sm", className="me-1"),
+                    dbc.Button("缓存加载", id="btn-cache", color="info", size="sm", className="me-2"),
                     dbc.Button("联网回测", id="btn-full", color="success", size="sm"),
+                ], style={"marginBottom": "4px"}),
+                html.Div([
+                    dbc.Button("一键模拟投资", id="btn-execute", color="warning", size="sm",
+                               style={"fontWeight": "bold"}),
                 ]),
-            ], width=2),
+            ], width=3),
         ], align="end"),
         html.Div(id="status-msg", style={
             "color": "#ffc107", "fontSize": "0.8rem", "marginTop": "8px",
@@ -467,6 +753,9 @@ app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}
 
     # ---- 今日操作建议 ----
     html.Div(id="today-plan-container", style={"padding": "0 28px 10px 28px"}),
+
+    # ---- 模拟投资历史 ----
+    html.Div(id="invest-history-container", style={"padding": "0 28px 10px 28px"}),
 
     # ---- 图表区 ----
     dcc.Loading(id="loading-charts", type="default", color="#45df7e", children=[
@@ -505,15 +794,17 @@ app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}
      Output("heatmap-chart", "figure"),
      Output("factor-bar", "figure"),
      Output("trade-table", "children")],
-    [Input("btn-cache", "n_clicks"),
-     Input("btn-full", "n_clicks")],
+    [Input("auto-load", "n_intervals"),       # 页面启动自动触发
+     Input("btn-cache", "n_clicks"),
+     Input("btn-full", "n_clicks"),
+     Input("btn-execute", "n_clicks")],
     [State("stock-selector", "value"),
      State("start-date", "value"),
      State("end-date", "value"),
      State("max-positions", "value"),
      State("initial-capital", "value")],
 )
-def handle_run(n_cache, n_full, stock_pool, start_date, end_date, max_pos, init_cap):
+def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_date, max_pos, init_cap):
     """单一回调：运行流水线 + 直接返回所有图表"""
     triggered = callback_context.triggered_id
     print(f"[DEBUG] triggered={triggered}, n_cache={n_cache}, n_full={n_full}")
@@ -521,9 +812,37 @@ def handle_run(n_cache, n_full, stock_pool, start_date, end_date, max_pos, init_
 
     if triggered is None:
         hint_text = f"缓存范围: {_default_start} ~ {_default_end}"
-        return "点击「缓存加载」秒开，或「联网回测」拉取最新数据", hint_text, *_init_display()
+        return f"加载中...", hint_text, *_init_display()
 
-    use_cache_only = (triggered == "btn-cache")
+    # 执行投资按钮：需要先确保策略已加载
+    if triggered == "btn-execute":
+        if not _state.get("loaded") or not _state.get("composite") is not None:
+            # 先跑一次流水线
+            if not stock_pool:
+                empty = _init_display()
+                return "⚠ 请选择至少一只股票", dash.no_update, *empty
+            init_cap_val = (init_cap or 100) * 10000
+            ok = run_pipeline(stock_pool,
+                             start_date or cfg.START_DATE,
+                             end_date or cfg.END_DATE,
+                             max_pos or cfg.MAX_POSITIONS,
+                             init_cap_val,
+                             use_cache_only=True)
+            if not ok:
+                empty = _init_display()
+                return f"[ERR] {_state['message']}", dash.no_update, *empty
+        success, exec_msg = _execute_investment(_state["composite"], _state["close_panel"],
+                                                max_pos or cfg.MAX_POSITIONS)
+        return _rebuild_display(exec_msg, use_cache_only=True)
+
+    # auto-load: 页面启动自动联网加载
+    if triggered == "auto-load":
+        use_cache_only = False  # 联网获取最新数据
+    elif triggered == "btn-cache":
+        use_cache_only = True
+    else:
+        use_cache_only = False
+
     if not stock_pool:
         empty = _init_display()
         return "⚠ 请选择至少一只股票", dash.no_update, *empty
@@ -700,5 +1019,122 @@ def handle_run(n_cache, n_full, stock_pool, start_date, end_date, max_pos, init_
         return f"[ERR] 图表生成失败: {str(e)[:80]}", dash.no_update, *empty
 
 
+# ======== 投资历史 — 常驻回调（页面加载即显示，不依赖回测）========
+@app.callback(
+    Output("invest-history-container", "children"),
+    [Input("url", "pathname"),        # 页面加载触发
+     Input("btn-cache", "n_clicks"),  # 回测后也刷新
+     Input("btn-full", "n_clicks"),
+     Input("btn-execute", "n_clicks")],
+)
+def load_invest_history(pathname, n_cache, n_full, n_execute):
+    """页面加载时自动从磁盘读取投资历史 + 缓存价格计算 P&L"""
+    hist_df = _load_investment_history()
+    if hist_df.empty:
+        return _build_investment_history_card(hist_df)
+
+    # 用缓存数据更新 P&L
+    try:
+        cache_data = load_from_cache(cfg.STOCK_POOL, cfg.START_DATE, cfg.END_DATE)
+        if cache_data:
+            hist_df = _update_investment_pnl(hist_df, cache_data)
+        # 如果 _state 有更新的数据，用它
+        if _state.get("data"):
+            hist_df = _update_investment_pnl(hist_df, _state["data"])
+    except Exception:
+        pass
+
+    return _build_investment_history_card(hist_df)
+
+
 if __name__ == "__main__":
     app.run(debug=False, port=cfg.DASH_PORT, host="0.0.0.0")
+
+
+def _rebuild_display(status_msg, use_cache_only=False):
+    """仅重建图表（不重跑流水线），用于执行投资按钮"""
+    engine = _state.get("engine")
+    composite = _state.get("composite")
+    close_panel = _state.get("close_panel")
+
+    if engine is None or composite is None or close_panel is None:
+        empty = _init_display()
+        return "[ERR] 请先加载数据", dash.no_update, *empty
+
+    m = engine.metrics
+
+    # KPI
+    kpi = [
+        dbc.Col(_kpi_card("累计收益率", m.get("累计收益率", "--")), width=2),
+        dbc.Col(_kpi_card("年化收益率", m.get("年化收益率 (CAGR)", "--")), width=2),
+        dbc.Col(_kpi_card("夏普比率",   m.get("夏普比率", "--"), "#17a2b8"), width=2),
+        dbc.Col(_kpi_card("最大回撤",   m.get("最大回撤", "--"), "#dc3545"), width=2),
+        dbc.Col(_kpi_card("胜率",       m.get("胜率", "--"), "#ffc107"), width=2),
+        dbc.Col(_kpi_card("最终权益",   m.get("最终权益", "--")), width=2),
+    ]
+
+    mode = "缓存" if use_cache_only else "联网"
+    msg = (f"[OK] [{mode}] {len(_state['data'])}只 | "
+           f"累计收益 {m.get('累计收益率','?')} | {status_msg}")
+    hint = f"数据区间: {close_panel.index.min().strftime('%Y-%m-%d')} ~ {close_panel.index.max().strftime('%Y-%m-%d')}"
+
+    _save_recommendation(composite, close_panel, cfg.MAX_POSITIONS)
+    prev_recs = _load_prev_recommendation()
+    prev_pnl = _calc_recommendation_pnl(prev_recs, _state["data"])
+    today_plan = _build_today_plan(composite, close_panel, cfg.MAX_POSITIONS, prev_pnl)
+
+    # 重用现有图表
+    pv = engine.portfolio_value.sort_index()
+    baseline = pv.values[0] if len(pv) > 0 else 1.0
+    norm = pv.values / baseline if baseline != 0 else pv.values
+    fig_eq = go.Figure()
+    fig_eq.add_trace(go.Scatter(x=pv.index, y=norm, mode="lines",
+        line=dict(color="#45df7e", width=2), fill="tozeroy",
+        fillcolor="rgba(69,223,126,0.08)", name="策略权益", hovertemplate="%{y:.3f}<extra></extra>"))
+    fig_eq.add_hline(y=1.0, line_dash="dash", line_color="#555", line_width=1)
+    last_val = norm[-1]
+    return_pct = (last_val - 1) * 100
+    fig_eq.add_annotation(x=pv.index[-1], y=last_val, text=f"{return_pct:+.1f}%  ",
+                          showarrow=False, xanchor="right",
+                          font=dict(color="#45df7e" if return_pct>=0 else "#dc3545", size=11))
+    fig_eq.update_layout(template="plotly_dark", paper_bgcolor="#16191f", plot_bgcolor="#16191f",
+                         margin=dict(l=40, r=30, t=30, b=30), xaxis=dict(color="#555"), yaxis=dict(color="#555"),
+                         showlegend=False, hovermode="x unified")
+
+    dd_series = engine.get_drawdown_series()
+    fig_dd = go.Figure()
+    fig_dd.add_trace(go.Scatter(x=dd_series.index, y=dd_series.values*100, mode="lines",
+        line=dict(color="#dc3545", width=1.5), fill="tozeroy",
+        fillcolor="rgba(220,53,69,0.12)", hovertemplate="%{y:.1f}%<extra></extra>"))
+    fig_dd.update_layout(template="plotly_dark", paper_bgcolor="#16191f", plot_bgcolor="#16191f",
+                         margin=dict(l=40, r=30, t=30, b=30), xaxis=dict(color="#555"), yaxis=dict(color="#555", ticksuffix="%"),
+                         showlegend=False, hovermode="x unified")
+
+    pos_df = engine.get_positions_df()
+    heatmap_data = (pos_df > 0).astype(int)
+    fig_heat = go.Figure(data=go.Heatmap(
+        z=heatmap_data.T.values, x=heatmap_data.index, y=heatmap_data.columns,
+        colorscale=[[0, "#16191f"], [1, "#45df7e"]], showscale=False,
+        hovertemplate="%{x|%Y-%m-%d}<br>%{y}: %{z}<extra></extra>"))
+    fig_heat.update_layout(template="plotly_dark", paper_bgcolor="#16191f", plot_bgcolor="#16191f",
+                           margin=dict(l=100, r=20, t=30, b=30), xaxis=dict(color="#555"), yaxis=dict(color="#555"))
+
+    latest = composite.iloc[-1].dropna().sort_values()
+    colors = ["#45df7e" if v > 0 else "#dc3545" for v in latest.values]
+    fig_factor = go.Figure(data=go.Bar(
+        x=latest.values, y=latest.index, orientation="h",
+        marker_color=colors, text=[f"{v:+.2f}" for v in latest.values],
+        textposition="outside", textfont=dict(size=10, color="#ccc")))
+    fig_factor.update_layout(template="plotly_dark", paper_bgcolor="#16191f", plot_bgcolor="#16191f",
+                             margin=dict(l=100, r=60, t=30, b=30), xaxis=dict(color="#555"), yaxis=dict(color="#555"),
+                             showlegend=False)
+
+    trade_log = engine.get_trade_log()
+    if not trade_log.empty:
+        display_log = trade_log.tail(50).iloc[::-1]
+        table = dbc.Table.from_dataframe(display_log, striped=False, bordered=False, hover=True, size="sm",
+            style={"fontSize": "0.72rem", "color": "#aaa"})
+    else:
+        table = html.P("暂无交易记录", style={"color": "#666", "textAlign": "center"})
+
+    return msg, hint, today_plan, kpi, fig_eq, fig_dd, fig_heat, fig_factor, table
