@@ -154,13 +154,14 @@
 <!-- ═══════════════════════════════════════════════ -->
 <div class="hero">
   <h1>量化多因子策略回测系统</h1>
-  <div class="sub">A股日频多因子选股 · 完整策略汇报</div>
+  <div class="sub">A股日频多因子选股 · 完整策略汇报 · v1.2</div>
   <div class="badges">
     <span class="badge accent">多因子</span>
-    <span class="badge green">截面排名</span>
+    <span class="badge green">周度调仓</span>
     <span class="badge purple">等权配置</span>
-    <span class="badge orange">每日调仓</span>
-    <span class="badge">纯多头</span>
+    <span class="badge orange">用户认证</span>
+    <span class="badge">双模式存储</span>
+    <span class="badge accent">PBKDF2</span>
   </div>
 </div>
 
@@ -513,19 +514,21 @@
 <section>
   <h2><span class="num">5</span> Dash 交互仪表盘</h2>
 
-  <p>系统提供了一个基于 <strong>Plotly Dash</strong> 的Web交互界面，包含以下核心功能模块：</p>
+  <p>系统提供了一个基于 <strong>Plotly Dash 4.1</strong> 的Web交互界面，支持响应式布局（手机/平板/桌面）。包含以下核心功能模块：</p>
 
   <div class="card">
-    <h4>7个核心图表</h4>
+    <h4>功能概览</h4>
     <table>
-      <tr><th>图表</th><th>类型</th><th>展示内容</th></tr>
+      <tr><th>模块</th><th>类型</th><th>说明</th></tr>
+      <tr><td>用户认证</td><td>遮罩登录页</td><td>用户名+密码注册/登录，PBKDF2-SHA256 密码哈希，本地 CSV / 生产 Supabase 双模式</td></tr>
       <tr><td>权益曲线</td><td>折线图</td><td>策略净值 vs 基准（沪深300）净值，归一化对比</td></tr>
-      <tr><td>回撤曲线</td><td>面积图</td><td>每日回撤百分比，直观展示风险时期</td></tr>
+      <tr><td>回撤分析</td><td>面积图</td><td>每日回撤百分比，直观展示风险时期</td></tr>
       <tr><td>持仓热力图</td><td>热力图</td><td>时间×股票矩阵，二值化显示每日持仓情况</td></tr>
       <tr><td>因子得分</td><td>横向柱状图</td><td>最新日期各股票的截面综合得分排名</td></tr>
       <tr><td>交易记录</td><td>数据表格</td><td>最近50笔交易的详细信息</td></tr>
-      <tr><td>绩效指标</td><td>数值卡片</td><td>CAGR、夏普比率、最大回撤、胜率等关键数字</td></tr>
-      <tr><td>今日操作建议</td><td>表格+盈亏追踪</td><td>基于最新数据的选股建议及历史推荐表现</td></tr>
+      <tr><td>绩效指标</td><td>KPI 卡片</td><td>CAGR、夏普比率、最大回撤、胜率等关键数字</td></tr>
+      <tr><td>今日操作建议</td><td>表格</td><td>基于最新数据生成推荐持仓，含调仓周期倒计时</td></tr>
+      <tr><td>模拟投资跟踪</td><td>统计卡片+表格</td><td>累计收益/胜率/每轮P&L，一键执行+自动结算上轮盈亏</td></tr>
     </table>
   </div>
 
@@ -616,20 +619,26 @@
     <tr><td>入口</td><td><code>main.py</code></td><td>启动 Dash Web 服务器</td></tr>
     <tr><td>配置</td><td><code>config.py</code></td><td>集中式参数（股票池、因子定义及权重、回测参数）</td></tr>
     <tr><td>数据</td><td><code>data.py</code></td><td>BaoStock（主）+ AKShare（备）双数据源，CSV磁盘缓存</td></tr>
-    <tr><td>因子</td><td><code>factors.py</code></td><td>10个原始因子计算引擎 + 批量调度</td></tr>
+    <tr><td>因子</td><td><code>factors.py</code></td><td>12因子计算引擎（含MACD、反转）</td></tr>
     <tr><td>策略</td><td><code>strategy.py</code></td><td>截面z-score标准化、因子加权合成、信号生成、等权分配</td></tr>
     <tr><td>回测</td><td><code>backtest.py</code></td><td>日频模拟交易循环 + 绩效指标计算</td></tr>
-    <tr><td>仪表盘</td><td><code>dashboard.py</code></td><td>Plotly Dash 界面 + 7个图表 + 交互控件</td></tr>
+    <tr><td>仪表盘</td><td><code>dashboard.py</code></td><td>Plotly Dash 4.1 + 响应式布局 + 用户认证 + 投资跟踪</td></tr>
+    <tr><td>存储</td><td><code>supabase_client.py</code></td><td>双模式：本地 CSV / Supabase PostgreSQL，自动切换</td></tr>
+    <tr><td>部署</td><td><code>wsgi.py / runtime.txt</code></td><td>Render + Gunicorn，Python 3.12 锁定</td></tr>
   </table>
   </div>
 
   <div class="callout info">
-    <strong>数据源说明：</strong>系统优先使用 <strong>BaoStock</strong>（证券宝）获取A股日频历史行情，数据字段包括开高低收、成交量、成交额、换手率、涨跌幅。BaoStock 返回的数据为<strong>后复权</strong>价格（adjustflag="2"），可正确反映分红送股后的真实收益。当 BaoStock 不可用时，自动切换至 <strong>AKShare</strong> 作为备用源。所有数据缓存在 <code>cache/</code> 目录下，避免重复网络请求。
+    <strong>数据源说明：</strong>系统优先使用 <strong>BaoStock</strong>（证券宝）获取A股日频历史行情，数据字段包括开高低收、成交量、成交额、换手率、涨跌幅。BaoStock 返回的数据为<strong>后复权</strong>价格（adjustflag="2"），可正确反映分红送股后的真实收益。当 BaoStock 不可用时，自动切换至 <strong>AKShare</strong> 作为备用源。所有数据缓存在 <code>cache/</code> 目录下。
+  </div>
+
+  <div class="callout good">
+    <strong>安全：</strong>密码使用 PBKDF2-SHA256（10万次迭代+随机盐）存储，SQL 查询全部参数化，依赖精确版本锁定，生产环境通过 Supabase Row-Level Security 隔离多用户数据。
   </div>
 </section>
 
 <div class="footer">
-  量化多因子策略回测系统 v1.0 beta · 汇报文档 · 2026-05-29
+  量化多因子策略回测系统 v1.2 · 汇报文档 · 2026-05-29
 </div>
 
 </div>
