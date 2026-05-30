@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+cache_local/
 cache/users.csv
 cache/investment_history.csv
 cache/recommendations.csv

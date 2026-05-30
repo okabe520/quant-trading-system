@@ -77,7 +77,8 @@ STOCK_NAMES = {
 import datetime as _dt
 START_DATE = "2023-01-01"
 END_DATE = _dt.date.today().strftime("%Y-%m-%d")
-CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+_CACHE_NAME = "cache" if DATA_SOURCE == "overseas" else "cache_local"
+CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), _CACHE_NAME)
 
 # ============ 因子参数 ============
 FACTOR_CONFIG = {
@@ -122,7 +123,7 @@ FACTOR_WEIGHTS = {
 # ============ 策略参数 ============
 MAX_POSITIONS = 10  # 最大持仓数（40只池子选10只=25%，最优）
 MIN_SIGNAL_THRESHOLD = 0.0  # 最低信号阈值
-REBALANCE_FREQUENCY = 5  # 调仓周期（交易日），5=每周调仓一次
+REBALANCE_FREQUENCY = 7  # 调仓周期（天），7=每周调仓一次
 AUTO_TRADE = (DATA_SOURCE == "local")  # 本地版自动交易；海外 Render 版全手动
 
 # ============ 回测参数 ============
