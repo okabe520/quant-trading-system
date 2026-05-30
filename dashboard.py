@@ -1196,7 +1196,7 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
      Input("btn-execute", "n_clicks"),
      Input("trade-version", "data")],
 )
-def load_invest_history(pathname, n_cache, n_full, n_execute):
+def load_invest_history(pathname, n_cache, n_full, n_execute, trade_ver):
     """页面加载时自动从磁盘读取投资历史 + 缓存价格计算 P&L"""
     hist_df = _load_investment_history()
     if hist_df.empty:
