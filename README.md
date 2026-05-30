@@ -1,18 +1,19 @@
-# 量化多因子策略回测系统 v1.2
+# 量化多因子策略回测系统 v1.3
 
 基于 Dash 的 A 股量化多因子策略回测与模拟投资跟踪系统。
 
 ## 功能
 
-- **用户认证** — 用户名+密码注册/登录，PBKDF2-SHA256 哈希存储
+- **免登录（本地）** — 本地版跳过登录，直接进入仪表盘；线上版保留用户认证
+- **全自动周度调仓** — 后台定时线程，工作日自动拉取数据 → 结算上轮 → 建仓新推荐，无需人工干预
+- **一键模拟投资** — 手动中断：即时卖出+买入，重置 7 天调仓周期
 - **日频回测引擎** — 含手续费(万3)、滑点(0.01%)、印花税(0.1%，仅卖出)
 - **12 因子模型** — 动量(3) / 波动率(2) / 量比(2) / RSI / MA偏离 / 布林位置 / MACD / 短期反转
-- **周度调仓** — 5 日调仓周期，降低交易成本
 - **可视化仪表盘** — 权益曲线、回撤分析、持仓热力图、因子得分、交易记录
 - **当日操作建议** — 基于最新数据生成推荐持仓，含调仓周期提醒
-- **一键模拟投资** — 点击执行策略，自动结算上轮盈亏 + 建仓新一轮
 - **投资历史常驻** — 页面启动即显示，累计收益/胜率/每轮 P&L 一览
 - **双模式存储** — 本地 CSV（默认），生产环境自动切换 Supabase 在线数据库
+- **双数据源** — 本地用 BaoStock + AKShare；海外 Render 用 yfinance + GitHub Actions 定时缓存
 - **响应式布局** — 手机/平板/桌面全适配
 
 ## 回测表现（2023-01 ~ 2026-05）
@@ -35,9 +36,18 @@ pip install -r requirements.txt
 python main.py
 ```
 
-浏览器打开 `http://localhost:8050`，首次使用需注册（用户名+密码≥4位）。
+浏览器打开 `http://localhost:8050`，本地版无需登录，直接查看。
 
-本地数据存储在 `cache/` 目录，多用户共享同一份投资记录。
+### 本地版 vs 线上版
+
+| 特性 | 本地版 | 线上 Render 版 |
+|------|--------|---------------|
+| 数据源 | BaoStock + AKShare | yfinance + 预缓存 |
+| 登录 | 跳过 | 需注册/登录 |
+| 自动交易 | ✅ 后台线程，7 天周期 | ❌ 全手动 |
+| 联网回测 | ✅ 实时拉取 | ⚠ yfinance 受限，靠缓存 |
+| 数据存储 | CSV | Supabase |
+| 缓存更新 | 联网回测时 | GitHub Actions 每周六自动 |
 
 ## 部署到 Render
 
@@ -49,19 +59,17 @@ python main.py
 |------|------|
 | `SUPABASE_URL` | Supabase 项目 URL |
 | `SUPABASE_ANON_KEY` | Supabase 匿名密钥 |
+| `DATA_SOURCE` | 设为 `overseas`（海外数据源） |
 | `APP_PASSWORD` | 默认管理员密码（fallback） |
-
-4. 部署后自动使用 Supabase 存储，多用户数据按用户名隔离
 
 ## 使用方式
 
 | 按钮 | 说明 |
 |------|------|
 | **缓存加载** | 仅用本地缓存，秒级出结果 |
-| **联网回测** | 联网拉取最新数据后回测 |
-| **一键模拟投资** | 卖出上轮持仓（结算盈亏），买入当日推荐（等权建仓） |
-
-页面启动时自动用缓存加载，首次使用需点「联网回测」拉取数据。
+| **联网回测** | 联网拉取最新数据后回测（本地版用 BaoStock，线上版用 yfinance） |
+| **一键模拟投资** | 手动触发：卖出所有持仓（结算盈亏），买入当日推荐（等权建仓），重置调仓周期 |
+| **自动调仓** | 本地版：后台每小时检查，7 天到期自动执行；周末跳过 |
 
 ## 股票池（40 只）
 
@@ -80,28 +88,32 @@ python main.py
 | 密码存储 | PBKDF2-SHA256 (10万迭代 + 随机盐) |
 | SQL 注入 | 全参数化查询 |
 | XSS 防护 | Jinja2 自动转义 |
-| 登录限速 | 用户名/IP 级别（生产环境） |
 | 依赖管理 | 精确版本锁定 |
 
 ## 项目结构
 
 ```
 ├── main.py              # 入口
-├── dashboard.py         # Dash 仪表盘（回测 + 登录 + 投资跟踪）
+├── dashboard.py         # Dash 仪表盘（回测 + 登录 + 投资跟踪 + 自动交易）
 ├── backtest.py          # 回测引擎
 ├── strategy.py          # 因子合成与信号生成
 ├── factors.py           # 12因子计算
-├── data.py              # 数据获取与缓存
+├── data.py              # 数据获取与缓存（双数据源）
 ├── config.py            # 配置参数
 ├── supabase_client.py   # 双模式存储（CSV + Supabase）
 ├── wsgi.py              # Render 部署入口
 ├── schema.sql           # Supabase 建表 DDL
 ├── runtime.txt          # Python 版本锁定
+├── Procfile             # Render 进程配置
 ├── strategy_report.html # 策略详解汇报
-└── cache/               # 数据缓存 + 用户/投资记录
+├── .github/workflows/   # GitHub Actions 自动刷新缓存
+└── cache/               # 40只股票数据缓存 + 用户/投资记录
 ```
 
 ## 数据源
 
-- [BaoStock](http://baostock.com)（默认，免费无需注册）
-- [AKShare](https://akshare.akfamily.xyz)（备用）
+| 版本 | 数据源 | 说明 |
+|------|--------|------|
+| 本地 | [BaoStock](http://baostock.com) | 默认，免费无需注册 |
+| 本地备用 | [AKShare](https://akshare.akfamily.xyz) | BaoStock 失败时自动切换 |
+| 海外 | [yfinance](https://pypi.org/project/yfinance/) | Render 部署用，GitHub Actions 每周六自动缓存 |
