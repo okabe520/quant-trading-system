@@ -973,11 +973,12 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
 
     # 执行投资按钮：需要先确保策略已加载
     if triggered == "btn-execute":
+        if datetime.now().weekday() >= 5:
+            return "⚠ 周末不交易，请在工作日操作", dash.no_update, *_init_display(), _trade_ver
         if not _state.get("loaded") or not _state.get("composite") is not None:
             # 先跑一次流水线
             if not stock_pool:
-                empty = _init_display()
-                return "⚠ 请选择至少一只股票", dash.no_update, *empty, _trade_ver
+                return "⚠ 请选择至少一只股票", dash.no_update, *_init_display(), _trade_ver
             init_cap_val = (init_cap or 100) * 10000
             ok = run_pipeline(stock_pool,
                              start_date or cfg.START_DATE,
@@ -986,8 +987,7 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
                              init_cap_val,
                              use_cache_only=True)
             if not ok:
-                empty = _init_display()
-                return f"[ERR] {_state['message']}", dash.no_update, *empty, _trade_ver
+                return f"[ERR] {_state['message']}", dash.no_update, *_init_display(), _trade_ver
         success, exec_msg = _execute_investment(_state["composite"], _state["close_panel"],
                                                 max_pos or cfg.MAX_POSITIONS, force=True)
         # 手动操作后重置自动调仓计时
