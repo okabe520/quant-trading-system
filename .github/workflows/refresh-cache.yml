@@ -1,0 +1,51 @@
+name: Refresh Stock Cache
+
+on:
+  schedule:
+    # 每周六 00:00 UTC（北京时间 8:00）
+    - cron: "0 0 * * 6"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pandas numpy yfinance
+
+      - name: Fetch latest stock data
+        run: |
+          python -c "
+          import sys
+          sys.path.insert(0, '.')
+          import config as cfg
+          from data import fetch_stock_pool
+          from datetime import date
+          end_date = date.today().strftime('%Y-%m-%d')
+          print(f'Fetching {len(cfg.STOCK_POOL)} stocks from {cfg.START_DATE} to {end_date}')
+          result = fetch_stock_pool(cfg.STOCK_POOL, cfg.START_DATE, end_date)
+          print(f'Done: {len(result)}/{len(cfg.STOCK_POOL)} stocks')
+          "
+        env:
+          DATA_SOURCE: overseas
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add cache/*.csv
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "chore: auto-refresh stock cache $(date +%Y-%m-%d)"
+            git push
+          fi
