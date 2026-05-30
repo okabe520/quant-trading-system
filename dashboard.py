@@ -773,7 +773,8 @@ app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}
     html.Div(id="login-overlay", style={
         "position": "fixed", "top": 0, "left": 0, "width": "100%", "height": "100%",
         "zIndex": 9999, "backgroundColor": "#111318",
-        "display": "flex", "justifyContent": "center", "alignItems": "center", "flexDirection": "column",
+        "display": "flex" if cfg.DATA_SOURCE != "local" else "none",
+        "justifyContent": "center", "alignItems": "center", "flexDirection": "column",
     }, children=[
         html.H1("量化多因子策略系统", style={"color": "#45df7e", "fontSize": "1.5rem"}),
         html.P("登录或注册", style={"color": "#777", "fontSize": "0.9rem", "marginBottom": "16px"}),
