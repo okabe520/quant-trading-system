@@ -2,7 +2,7 @@
 可视化仪表盘 - Dash Web 应用
 """
 
-import os, sys, json, time, traceback
+import os, sys, json, time, traceback, threading
 from datetime import datetime
 
 WEEKDAY_NAMES = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
@@ -50,6 +50,7 @@ _state = {
     "close_panel": None, "loaded": False, "message": "",
 }
 _trade_ver = 0  # 每次交易后 +1，触发 invest-history 刷新
+_trade_lock = threading.Lock()  # 防止后台线程与页面回调并发交易
 
 
 def run_pipeline(stock_pool, start_date, end_date, max_pos, init_cap, use_cache_only=False):
@@ -372,6 +373,14 @@ AUTO_STATE_FILE = os.path.join(cfg.CACHE_DIR, "auto_trade_state.json")
 def _execute_investment(composite, close_panel, max_pos, force=False):
     """执行当前策略：卖出上一轮持仓（结算盈亏），买入新一轮推荐。
     force=True 时跳过同日期去重（手动/自动中断调用）。"""
+    global _trade_ver
+    with _trade_lock:
+        return _execute_investment_locked(composite, close_panel, max_pos, force)
+
+
+def _execute_investment_locked(composite, close_panel, max_pos, force):
+    """_execute_investment 的实际逻辑，调用方需持有 _trade_lock"""
+    global _trade_ver
     if composite is None or composite.empty:
         return False, "无策略数据"
 
@@ -1218,7 +1227,6 @@ def load_invest_history(pathname, n_cache, n_full, n_execute, trade_ver):
 
 # ── 后台自动交易线程（仅本地版启动）──
 if cfg.AUTO_TRADE:
-    import threading
     _auto_thread = threading.Thread(target=_auto_trade_loop, daemon=True)
     _auto_thread.start()
 
