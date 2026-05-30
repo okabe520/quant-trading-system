@@ -25,4 +25,23 @@ except Exception as e:
     raise
 
 server = app.server
+
+# 诊断端点 — 检查数据源状态
+@server.route("/diag")
+def diag():
+    import config as cfg
+    import json as _json
+    result = {"data_source": cfg.DATA_SOURCE}
+    try:
+        import yfinance as yf
+        result["yfinance_version"] = yf.__version__
+        tickers = yf.download("000001.SZ 600519.SS", period="5d", progress=False, auto_adjust=False)
+        result["yf_test"] = f"{len(tickers)} rows" if not tickers.empty else "EMPTY"
+    except Exception as e:
+        result["yf_error"] = str(e)
+    from data import fetch_stock_pool
+    d = fetch_stock_pool(["000001"], "2025-06-01", "2025-06-10")
+    result["fetch_test"] = f"{len(d)} stocks, {len(d.get('000001', []))} rows"
+    return _json.dumps(result, indent=2, ensure_ascii=False), 200, {"Content-Type": "application/json"}
+
 print("=== Ready ===", flush=True)
