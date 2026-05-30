@@ -3,6 +3,11 @@
 """
 import os
 
+# ============ 数据源 ============
+# "local" = BaoStock + AKShare（国内）
+# "overseas" = yfinance（海外 Render 部署）
+DATA_SOURCE = os.environ.get("DATA_SOURCE", "local")
+
 # ============ 股票池 ============
 STOCK_POOL = [
     # ── 原有 20 只 ──

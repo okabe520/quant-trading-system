@@ -9,6 +9,11 @@ import numpy as np
 
 import config as cfg
 
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
+
 
 def _ensure_cache_dir():
     os.makedirs(cfg.CACHE_DIR, exist_ok=True)
@@ -18,6 +23,13 @@ def _to_bs_code(symbol: str) -> str:
     if symbol.startswith("6") or symbol.startswith("68"):
         return f"sh.{symbol}"
     return f"sz.{symbol}"
+
+
+def _to_yf_code(symbol: str) -> str:
+    """6 开头→上海 .SS，其余→深圳 .SZ"""
+    if symbol.startswith("6") or symbol.startswith("68"):
+        return f"{symbol}.SS"
+    return f"{symbol}.SZ"
 
 
 def _cache_hit(cache_path: str, start_date: str, end_date: str) -> pd.DataFrame | None:
@@ -94,6 +106,12 @@ def fetch_stock_pool(pool: list = None, start_date: str = None, end_date: str = 
         return result
 
     print(f"  缓存命中 {len(result)}, 需联网拉取 {len(need_fetch)}")
+
+    # ── 海外数据源：直接走 yfinance ──
+    if cfg.DATA_SOURCE == "overseas":
+        _fetch_via_yfinance(need_fetch, start_date, end_date, result)
+        print(f"  最终: {len(result)}/{len(pool)} 只可用\n")
+        return result
 
     # 2) 一次 login，批量拉取所有缺失股票
     import baostock as bs
@@ -174,6 +192,50 @@ def _fetch_via_akshare(symbols: list, start_date: str, end_date: str, result: di
                 pass
     except Exception:
         pass
+
+
+def _fetch_via_yfinance(symbols: list, start_date: str, end_date: str, result: dict):
+    """yfinance 海外数据源 — 批量下载，字段映射到统一格式"""
+    if yf is None:
+        print("    [yfinance] not installed")
+        return
+
+    yf_codes = [_to_yf_code(s) for s in symbols]
+    tickers = yf.download(yf_codes, start=start_date, end=end_date, progress=False, auto_adjust=False)
+
+    if tickers.empty:
+        print("    [yfinance] 返回空数据")
+        return
+
+    for sym, yf_code in zip(symbols, yf_codes):
+        try:
+            if len(yf_codes) == 1:
+                df_raw = tickers.copy()
+            else:
+                df_raw = tickers.xs(yf_code, axis=1, level=1).copy()
+
+            if df_raw.empty:
+                print(f"    [yf] {sym}: 无数据")
+                continue
+
+            df = pd.DataFrame()
+            df["open"] = df_raw["Open"]
+            df["high"] = df_raw["High"]
+            df["low"] = df_raw["Low"]
+            df["close"] = df_raw["Close"]
+            df["volume"] = df_raw["Volume"]
+            df["amount"] = df["close"] * df["volume"]
+            df["pct_change"] = df["close"].pct_change() * 100
+            df["turnover"] = np.nan
+            df.index = pd.to_datetime(df_raw.index)
+            df.sort_index(inplace=True)
+
+            cp = os.path.join(cfg.CACHE_DIR, f"{sym}.csv")
+            df.to_csv(cp)
+            result[sym] = df
+            print(f"    [yf OK] {sym}: {len(df)} 条")
+        except Exception as e:
+            print(f"    [yf] {sym}: {e}")
 
 
 def get_trading_dates(data_dict: dict) -> pd.DatetimeIndex:
