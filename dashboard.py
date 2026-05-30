@@ -694,7 +694,7 @@ def _read_cache_date_range():
 
 _cache_start, _cache_end = _read_cache_date_range()
 _default_start = _cache_start or cfg.START_DATE
-_default_end = _cache_end or cfg.END_DATE
+_default_end = max(_cache_end or "", cfg.END_DATE)  # 始终显示最新日期
 
 INPUT_STYLE = {
     "width": "140px", "display": "inline-block",
