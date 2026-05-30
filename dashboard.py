@@ -470,10 +470,14 @@ def _save_auto_state(state: dict):
 
 
 def _check_and_auto_trade():
-    """页面加载后检查调仓周期，到期自动执行交易"""
+    """页面加载后检查调仓周期，到期自动执行交易（仅交易日）"""
     if not cfg.AUTO_TRADE:
         return None
     if not _state.get("loaded"):
+        return None
+
+    # 周末不交易
+    if datetime.now().weekday() >= 5:
         return None
 
     state = _load_auto_state()
@@ -919,8 +923,6 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
                 return f"[ERR] {_state['message']}", dash.no_update, *empty
         success, exec_msg = _execute_investment(_state["composite"], _state["close_panel"],
                                                 max_pos or cfg.MAX_POSITIONS, force=True)
-        print(f"[DEBUG] btn-execute: success={success}, msg={exec_msg}", flush=True)
-        print(f"[DEBUG] composite empty={_state['composite'].empty if _state.get('composite') is not None else 'None'}", flush=True)
         # 手动操作后重置自动调仓计时
         if success:
             cp = _state.get("close_panel")
@@ -969,9 +971,8 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
     close_panel = _state["close_panel"]
 
     # ── 自动交易检查（仅缓存模式，避免联网回测重复触发）──
-    auto_state = None
     if use_cache_only:
-        auto_state = _check_and_auto_trade()
+        _check_and_auto_trade()
 
     try:
         # ---- KPI ----
