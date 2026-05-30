@@ -8,6 +8,10 @@ _key = os.environ.get("SUPABASE_ANON_KEY", "")
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "quant2024")
 MODE = "supabase" if _url and _key else "csv"
 
+# 确保缓存目录存在（新部署时 cache/ 不在 git 中）
+_cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+os.makedirs(_cache_dir, exist_ok=True)
+
 _supabase = None
 
 if MODE == "supabase":
