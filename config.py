@@ -74,8 +74,9 @@ STOCK_NAMES = {
 }
 
 # ============ 数据 ============
+import datetime as _dt
 START_DATE = "2023-01-01"
-END_DATE = "2026-05-30"  # GitHub Action 每周自动更新此日期
+END_DATE = _dt.date.today().strftime("%Y-%m-%d")
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 
 # ============ 因子参数 ============
