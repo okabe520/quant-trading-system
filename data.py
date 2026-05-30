@@ -195,47 +195,75 @@ def _fetch_via_akshare(symbols: list, start_date: str, end_date: str, result: di
 
 
 def _fetch_via_yfinance(symbols: list, start_date: str, end_date: str, result: dict):
-    """yfinance 海外数据源 — 批量下载，字段映射到统一格式"""
+    """yfinance 海外数据源 — 分批下载 + 重试，字段映射到统一格式"""
     if yf is None:
         print("    [yfinance] not installed")
         return
 
-    yf_codes = [_to_yf_code(s) for s in symbols]
-    tickers = yf.download(yf_codes, start=start_date, end=end_date, progress=False, auto_adjust=False)
+    import requests.adapters
 
-    if tickers.empty:
-        print("    [yfinance] 返回空数据")
-        return
+    # 伪装成浏览器，避免被 Yahoo 直接拒绝
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                      "(KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+    })
+    retry = requests.adapters.Retry(total=3, backoff_factor=2,
+                                     status_forcelist=[429, 500, 502, 503, 504])
+    session.mount("https://", requests.adapters.HTTPAdapter(max_retries=retry))
 
-    for sym, yf_code in zip(symbols, yf_codes):
-        try:
-            if len(yf_codes) == 1:
-                df_raw = tickers.copy()
-            else:
-                df_raw = tickers.xs(yf_code, axis=1, level=1).copy()
+    batch_size = 5  # 每批最多 5 只，降低限流概率
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i:i + batch_size]
+        yf_codes = [_to_yf_code(s) for s in batch]
 
-            if df_raw.empty:
-                print(f"    [yf] {sym}: 无数据")
-                continue
+        for attempt in range(3):
+            try:
+                tickers = yf.download(
+                    yf_codes, start=start_date, end=end_date,
+                    progress=False, auto_adjust=False, session=session,
+                )
+                if tickers.empty:
+                    print(f"    [yf] batch {i}: 空, attempt {attempt+1}/3")
+                    time.sleep(3 * (attempt + 1))
+                    continue
 
-            df = pd.DataFrame()
-            df["open"] = df_raw["Open"]
-            df["high"] = df_raw["High"]
-            df["low"] = df_raw["Low"]
-            df["close"] = df_raw["Close"]
-            df["volume"] = df_raw["Volume"]
-            df["amount"] = df["close"] * df["volume"]
-            df["pct_change"] = df["close"].pct_change() * 100
-            df["turnover"] = np.nan
-            df.index = pd.to_datetime(df_raw.index)
-            df.sort_index(inplace=True)
+                for sym, yf_code in zip(batch, yf_codes):
+                    try:
+                        df_raw = tickers if len(yf_codes) == 1 else tickers.xs(yf_code, axis=1, level=1).copy()
+                        if df_raw.empty:
+                            print(f"    [yf] {sym}: 无数据")
+                            continue
 
-            cp = os.path.join(cfg.CACHE_DIR, f"{sym}.csv")
-            df.to_csv(cp)
-            result[sym] = df
-            print(f"    [yf OK] {sym}: {len(df)} 条")
-        except Exception as e:
-            print(f"    [yf] {sym}: {e}")
+                        df = pd.DataFrame()
+                        df["open"] = df_raw["Open"]
+                        df["high"] = df_raw["High"]
+                        df["low"] = df_raw["Low"]
+                        df["close"] = df_raw["Close"]
+                        df["volume"] = df_raw["Volume"]
+                        df["amount"] = df["close"] * df["volume"]
+                        df["pct_change"] = df["close"].pct_change() * 100
+                        df["turnover"] = np.nan
+                        df.index = pd.to_datetime(df_raw.index)
+                        df.sort_index(inplace=True)
+
+                        cp = os.path.join(cfg.CACHE_DIR, f"{sym}.csv")
+                        df.to_csv(cp)
+                        result[sym] = df
+                        print(f"    [yf OK] {sym}: {len(df)} 条")
+                    except Exception as e:
+                        print(f"    [yf] {sym}: {e}")
+                break  # success, exit retry loop
+
+            except Exception as e:
+                print(f"    [yf] batch {i} attempt {attempt+1}: {e}")
+                time.sleep(3 * (attempt + 1))
+
+        if i + batch_size < len(symbols):
+            time.sleep(2)  # 批次间延迟
 
 
 def get_trading_dates(data_dict: dict) -> pd.DatetimeIndex:
