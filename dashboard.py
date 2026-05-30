@@ -365,10 +365,12 @@ def _calc_recommendation_pnl(prev_recs, data_dict):
 # 模拟投资跟踪 — 一键执行 + 历史P&L
 # ---------------------------------------------------------------------------
 INVEST_HISTORY_FILE = os.path.join(cfg.CACHE_DIR, "investment_history.csv")
+AUTO_STATE_FILE = os.path.join(cfg.CACHE_DIR, "auto_trade_state.json")
 
 
-def _execute_investment(composite, close_panel, max_pos):
-    """一键执行当前策略：卖出上一轮持仓（结算盈亏），买入新一轮推荐"""
+def _execute_investment(composite, close_panel, max_pos, force=False):
+    """执行当前策略：卖出上一轮持仓（结算盈亏），买入新一轮推荐。
+    force=True 时跳过同日期去重（手动/自动中断调用）。"""
     if composite is None or composite.empty:
         return False, "无策略数据"
 
@@ -384,9 +386,10 @@ def _execute_investment(composite, close_panel, max_pos):
     else:
         df_all = pd.DataFrame()
 
-    # 同一日期不重复执行
-    if not df_all.empty and str(last_date.date()) in df_all[df_all["status"] == "holding"]["execute_date"].values:
-        return False, f"日期 {last_date.date()} 已有执行记录"
+    # 同一日期去重（force=True 时跳过，用于手动中断重置）
+    if not force and not df_all.empty:
+        if str(last_date.date()) in df_all[df_all["status"] == "holding"]["execute_date"].values:
+            return False, f"日期 {last_date.date()} 已有执行记录"
 
     # ── 1. 结算上一轮持仓（用最新收盘价卖出） ──
     closed_count = 0
@@ -445,6 +448,60 @@ def _execute_investment(composite, close_panel, max_pos):
         msg += f"，上轮已结算({closed_count}只)"
     print(f"[INVEST] {msg}")
     return True, msg
+
+
+# ---------------------------------------------------------------------------
+# 自动交易状态
+# ---------------------------------------------------------------------------
+
+def _load_auto_state() -> dict:
+    if not os.path.exists(AUTO_STATE_FILE):
+        return {"last_trade_date": None, "auto_enabled": cfg.AUTO_TRADE}
+    try:
+        with open(AUTO_STATE_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {"last_trade_date": None, "auto_enabled": cfg.AUTO_TRADE}
+
+
+def _save_auto_state(state: dict):
+    with open(AUTO_STATE_FILE, "w") as f:
+        json.dump(state, f)
+
+
+def _check_and_auto_trade():
+    """页面加载后检查调仓周期，到期自动执行交易"""
+    if not cfg.AUTO_TRADE:
+        return None
+    if not _state.get("loaded"):
+        return None
+
+    state = _load_auto_state()
+    if not state.get("auto_enabled", True):
+        return None
+
+    close_panel = _state.get("close_panel")
+    if close_panel is None or close_panel.empty:
+        return None
+
+    latest_data_date = close_panel.index.max()
+    last_trade = state.get("last_trade_date")
+    if last_trade:
+        days_since = (latest_data_date - pd.Timestamp(last_trade)).days
+        if days_since < cfg.REBALANCE_FREQUENCY:
+            return state  # 未到调仓周期
+
+    # 执行自动交易
+    success, msg = _execute_investment(
+        _state["composite"], close_panel,
+        cfg.MAX_POSITIONS,
+    )
+    if success:
+        state["last_trade_date"] = str(latest_data_date.date())
+        _save_auto_state(state)
+        print(f"[AUTO] 自动调仓完成: {msg}")
+        return state
+    return state
 
 
 def _load_investment_history():
@@ -689,6 +746,12 @@ app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}
             "backgroundColor": "#1a1d23", "border": "1px solid #2a2d33",
             "borderRadius": "4px", "fontFamily": "monospace",
         }),
+        html.Span(id="auto-status", style={
+            "color": "#45df7e" if cfg.AUTO_TRADE else "#888",
+            "fontSize": "0.7rem", "padding": "2px 10px",
+            "backgroundColor": "#1a1d23", "border": "1px solid #2a2d33",
+            "borderRadius": "4px", "fontFamily": "monospace",
+        }),
     ], style={"padding": "14px 16px", "display": "flex", "justifyContent": "space-between",
               "alignItems": "center", "flexWrap": "wrap", "gap": "8px",
               "backgroundColor": "#16191f", "borderBottom": "1px solid #2a2d33"}),
@@ -855,7 +918,16 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
                 empty = _init_display()
                 return f"[ERR] {_state['message']}", dash.no_update, *empty
         success, exec_msg = _execute_investment(_state["composite"], _state["close_panel"],
-                                                max_pos or cfg.MAX_POSITIONS)
+                                                max_pos or cfg.MAX_POSITIONS, force=True)
+        print(f"[DEBUG] btn-execute: success={success}, msg={exec_msg}", flush=True)
+        print(f"[DEBUG] composite empty={_state['composite'].empty if _state.get('composite') is not None else 'None'}", flush=True)
+        # 手动操作后重置自动调仓计时
+        if success:
+            cp = _state.get("close_panel")
+            if cp is not None and not cp.empty:
+                auto_state = _load_auto_state()
+                auto_state["last_trade_date"] = str(cp.index.max().date())
+                _save_auto_state(auto_state)
         return _rebuild_display(exec_msg, use_cache_only=True)
 
     # auto-load: 页面启动用缓存秒出（首次部署无缓存则空跑，用户点"联网回测"拉数据）
@@ -895,6 +967,11 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
     m = engine.metrics
     composite = _state["composite"]
     close_panel = _state["close_panel"]
+
+    # ── 自动交易检查（仅缓存模式，避免联网回测重复触发）──
+    auto_state = None
+    if use_cache_only:
+        auto_state = _check_and_auto_trade()
 
     try:
         # ---- KPI ----
@@ -1161,6 +1238,37 @@ def _rebuild_display(status_msg, use_cache_only=False):
         table = html.P("暂无交易记录", style={"color": "#666", "textAlign": "center"})
 
     return msg, hint, today_plan, kpi, fig_eq, fig_dd, fig_heat, fig_factor, table
+
+
+# ======== 自动交易状态指示 ========
+@app.callback(
+    Output("auto-status", "children"),
+    Output("auto-status", "style"),
+    [Input("url", "pathname"),
+     Input("btn-cache", "n_clicks"),
+     Input("btn-execute", "n_clicks")],
+)
+def update_auto_status(pathname, n_cache, n_execute):
+    if not cfg.AUTO_TRADE:
+        return "自动策略: 仅限本地", {"display": "none", "fontSize": "0.7rem"}
+    state = _load_auto_state()
+    last = state.get("last_trade_date")
+    if last:
+        from datetime import date
+        days_since = (date.today() - pd.Timestamp(last).date()).days
+        next_in = max(0, cfg.REBALANCE_FREQUENCY - days_since)
+        return (
+            f"自动调仓 | 上次:{last[5:]} | {'今日到期' if next_in==0 else f'{next_in}天后'}",
+            {"color": "#45df7e" if next_in == 0 else "#ffc107", "fontSize": "0.7rem",
+             "padding": "2px 10px", "backgroundColor": "#1a1d23",
+             "border": "1px solid #2a2d33", "borderRadius": "4px", "fontFamily": "monospace"},
+        )
+    return (
+        "自动调仓 | 待首次执行",
+        {"color": "#888", "fontSize": "0.7rem", "padding": "2px 10px",
+         "backgroundColor": "#1a1d23", "border": "1px solid #2a2d33",
+         "borderRadius": "4px", "fontFamily": "monospace"},
+    )
 
 
 # ======== 登录/退出 ========

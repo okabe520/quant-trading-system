@@ -75,7 +75,7 @@ STOCK_NAMES = {
 
 # ============ 数据 ============
 START_DATE = "2023-01-01"
-END_DATE = "2026-05-28"
+END_DATE = "2026-05-30"  # GitHub Action 每周自动更新此日期
 CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
 
 # ============ 因子参数 ============
@@ -122,6 +122,7 @@ FACTOR_WEIGHTS = {
 MAX_POSITIONS = 10  # 最大持仓数（40只池子选10只=25%，最优）
 MIN_SIGNAL_THRESHOLD = 0.0  # 最低信号阈值
 REBALANCE_FREQUENCY = 5  # 调仓周期（交易日），5=每周调仓一次
+AUTO_TRADE = (DATA_SOURCE == "local")  # 本地版自动交易；海外 Render 版全手动
 
 # ============ 回测参数 ============
 INITIAL_CAPITAL = 1_000_000  # 初始资金

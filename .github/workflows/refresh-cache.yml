@@ -25,12 +25,19 @@ jobs:
       - name: Fetch latest stock data
         run: |
           python -c "
-          import sys
+          import sys, re
           sys.path.insert(0, '.')
-          import config as cfg
-          from data import fetch_stock_pool
           from datetime import date
           end_date = date.today().strftime('%Y-%m-%d')
+          # Update END_DATE in config.py
+          with open('config.py', 'r') as f:
+              config = f.read()
+          config = re.sub(r'END_DATE = \"[^\"]+\"', f'END_DATE = \"{end_date}\"', config)
+          with open('config.py', 'w') as f:
+              f.write(config)
+          print(f'Updated END_DATE to {end_date}')
+          import config as cfg
+          from data import fetch_stock_pool
           print(f'Fetching {len(cfg.STOCK_POOL)} stocks from {cfg.START_DATE} to {end_date}')
           result = fetch_stock_pool(cfg.STOCK_POOL, cfg.START_DATE, end_date)
           print(f'Done: {len(result)}/{len(cfg.STOCK_POOL)} stocks')
@@ -42,7 +49,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add cache/*.csv
+          git add cache/*.csv config.py
           if git diff --cached --quiet; then
             echo "No changes"
           else
