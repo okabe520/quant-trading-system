@@ -4,3 +4,4 @@ cache_local/
 cache/users.csv
 cache/investment_history.csv
 cache/recommendations.csv
+cache/auto_trade_state.json
