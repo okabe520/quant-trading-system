@@ -983,7 +983,10 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
     # 执行投资按钮：需要先确保策略已加载
     if triggered == "btn-execute":
         if datetime.now().weekday() >= 5:
-            return "⚠ 周末不交易，请在工作日操作", dash.no_update, *_init_display(), _trade_ver
+            return ("⚠ 周末不交易，请在工作日操作", dash.no_update,
+                    dash.no_update, dash.no_update, dash.no_update,
+                    dash.no_update, dash.no_update, dash.no_update,
+                    dash.no_update, _trade_ver)
         if not _state.get("loaded") or not _state.get("composite") is not None:
             # 先跑一次流水线
             if not stock_pool:
