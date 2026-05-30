@@ -32,8 +32,9 @@ def _to_yf_code(symbol: str) -> str:
     return f"{symbol}.SZ"
 
 
-def _cache_hit(cache_path: str, start_date: str, end_date: str) -> pd.DataFrame | None:
-    """缓存需完全覆盖请求区间才命中，避免漏掉最新交易日"""
+def _cache_hit(cache_path: str, start_date: str, end_date: str,
+               partial_ok: bool = False) -> pd.DataFrame | None:
+    """partial_ok=True: 重叠即返回（缓存加载）; False: 需完全覆盖（联网回测）"""
     if not os.path.exists(cache_path):
         return None
     df = pd.read_csv(cache_path, index_col=0, parse_dates=True)
@@ -44,7 +45,12 @@ def _cache_hit(cache_path: str, start_date: str, end_date: str) -> pd.DataFrame 
     cache_start = df.index.min()
     cache_end = df.index.max()
 
-    # 缓存必须完全覆盖请求区间，否则返回 None 触发重新拉取
+    if cache_end < req_start or cache_start > req_end:
+        return None
+
+    if partial_ok:
+        return df.loc[max(cache_start, req_start):min(cache_end, req_end)]
+    # 严格模式：缓存必须完全覆盖
     if cache_start > req_start or cache_end < req_end:
         return None
     return df.loc[req_start:req_end]
@@ -58,7 +64,8 @@ def load_from_cache(pool: list, start_date: str, end_date: str) -> dict:
     _ensure_cache_dir()
     result = {}
     for sym in pool:
-        df = _cache_hit(os.path.join(cfg.CACHE_DIR, f"{sym}.csv"), start_date, end_date)
+        df = _cache_hit(os.path.join(cfg.CACHE_DIR, f"{sym}.csv"), start_date, end_date,
+                         partial_ok=True)
         if df is not None:
             result[sym] = df
     return result
@@ -88,7 +95,7 @@ def fetch_stock_pool(pool: list = None, start_date: str = None, end_date: str = 
     need_fetch = []
     for sym in pool:
         cp = os.path.join(cfg.CACHE_DIR, f"{sym}.csv")
-        df = _cache_hit(cp, start_date, end_date)
+        df = _cache_hit(cp, start_date, end_date, partial_ok=use_cache_only)
         if df is not None:
             result[sym] = df
         else:
