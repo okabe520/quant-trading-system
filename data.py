@@ -33,7 +33,7 @@ def _to_yf_code(symbol: str) -> str:
 
 
 def _cache_hit(cache_path: str, start_date: str, end_date: str) -> pd.DataFrame | None:
-    """缓存与请求区间有重叠即返回可用的交叉区间"""
+    """缓存需完全覆盖请求区间才命中，避免漏掉最新交易日"""
     if not os.path.exists(cache_path):
         return None
     df = pd.read_csv(cache_path, index_col=0, parse_dates=True)
@@ -44,13 +44,10 @@ def _cache_hit(cache_path: str, start_date: str, end_date: str) -> pd.DataFrame 
     cache_start = df.index.min()
     cache_end = df.index.max()
 
-    # 缓存与请求区间无交集
-    if cache_end < req_start or cache_start > req_end:
+    # 缓存必须完全覆盖请求区间，否则返回 None 触发重新拉取
+    if cache_start > req_start or cache_end < req_end:
         return None
-    # 返回可用的重叠区间
-    actual_start = max(cache_start, req_start)
-    actual_end = min(cache_end, req_end)
-    return df.loc[actual_start:actual_end]
+    return df.loc[req_start:req_end]
 
 
 # ---------------------------------------------------------------------------
