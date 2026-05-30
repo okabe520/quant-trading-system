@@ -49,6 +49,7 @@ _state = {
     "signals": None, "weights": None, "engine": None,
     "close_panel": None, "loaded": False, "message": "",
 }
+_trade_ver = 0  # 每次交易后 +1，触发 invest-history 刷新
 
 
 def run_pipeline(stock_pool, start_date, end_date, max_pos, init_cap, use_cache_only=False):
@@ -391,10 +392,15 @@ def _execute_investment(composite, close_panel, max_pos, force=False):
         if str(last_date.date()) in df_all[df_all["status"] == "holding"]["execute_date"].values:
             return False, f"日期 {last_date.date()} 已有执行记录"
 
-    # ── 1. 结算上一轮持仓（用最新收盘价卖出） ──
+    # ── 1. 结算所有现有持仓（force 模式下次日也关，普通模式只关不同日期的）──
     closed_count = 0
     if not df_all.empty:
         holding_mask = df_all["status"] == "holding"
+        if holding_mask.any():
+            # 普通模式：只关不同日期的持仓；force 模式：全部关
+            if not force:
+                current_date_str = str(last_date.date())
+                holding_mask = holding_mask & (df_all["execute_date"] != current_date_str)
         if holding_mask.any():
             prev_date = df_all.loc[holding_mask, "execute_date"].iloc[0]
             for idx in df_all[holding_mask].index:
@@ -410,7 +416,6 @@ def _execute_investment(composite, close_panel, max_pos, force=False):
                         df_all.at[idx, "exit_date"] = last_date.strftime("%Y-%m-%d")
                         closed_count += 1
             if closed_count > 0:
-                # 计算上一轮加权收益
                 prev_holding = df_all[df_all["execute_date"] == str(prev_date).split()[0][:10]]
                 prev_holding = prev_holding.dropna(subset=["return_pct", "weight"])
                 if not prev_holding.empty:
@@ -446,6 +451,8 @@ def _execute_investment(composite, close_panel, max_pos, force=False):
     msg = f"已执行 {n} 只建仓"
     if closed_count > 0:
         msg += f"，上轮已结算({closed_count}只)"
+    global _trade_ver
+    _trade_ver += 1
     print(f"[INVEST] {msg}")
     return True, msg
 
@@ -769,6 +776,7 @@ STOCK_OPTIONS = [{"label": s, "value": s} for s in cfg.STOCK_POOL]
 app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}, children=[
     dcc.Location(id="url", refresh=False),
     dcc.Interval(id="auto-load", interval=500, max_intervals=1),
+    dcc.Store(id="trade-version", data=0),
 
     html.Div(id="login-overlay", style={
         "position": "fixed", "top": 0, "left": 0, "width": "100%", "height": "100%",
@@ -941,7 +949,8 @@ app.layout = html.Div(style={"backgroundColor": "#111318", "minHeight": "100vh"}
      Output("drawdown-chart", "figure"),
      Output("heatmap-chart", "figure"),
      Output("factor-bar", "figure"),
-     Output("trade-table", "children")],
+     Output("trade-table", "children"),
+     Output("trade-version", "data")],
     [Input("auto-load", "n_intervals"),       # 页面启动自动触发
      Input("btn-cache", "n_clicks"),
      Input("btn-full", "n_clicks"),
@@ -960,7 +969,7 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
 
     if triggered is None:
         hint_text = f"缓存范围: {_default_start} ~ {_default_end}"
-        return f"加载中...", hint_text, *_init_display()
+        return f"加载中...", hint_text, *_init_display(), _trade_ver
 
     # 执行投资按钮：需要先确保策略已加载
     if triggered == "btn-execute":
@@ -968,7 +977,7 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
             # 先跑一次流水线
             if not stock_pool:
                 empty = _init_display()
-                return "⚠ 请选择至少一只股票", dash.no_update, *empty
+                return "⚠ 请选择至少一只股票", dash.no_update, *empty, _trade_ver
             init_cap_val = (init_cap or 100) * 10000
             ok = run_pipeline(stock_pool,
                              start_date or cfg.START_DATE,
@@ -978,7 +987,7 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
                              use_cache_only=True)
             if not ok:
                 empty = _init_display()
-                return f"[ERR] {_state['message']}", dash.no_update, *empty
+                return f"[ERR] {_state['message']}", dash.no_update, *empty, _trade_ver
         success, exec_msg = _execute_investment(_state["composite"], _state["close_panel"],
                                                 max_pos or cfg.MAX_POSITIONS, force=True)
         # 手动操作后重置自动调仓计时
@@ -1000,7 +1009,7 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
 
     if not stock_pool:
         empty = _init_display()
-        return "⚠ 请选择至少一只股票", dash.no_update, *empty
+        return "⚠ 请选择至少一只股票", dash.no_update, *empty, _trade_ver
 
     init_cap_val = (init_cap or 100) * 10000
     t0 = time.time()
@@ -1015,12 +1024,12 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
     except Exception as e:
         traceback.print_exc()
         empty = _init_display()
-        return f"[ERR] 回测异常: {str(e)[:80]}", dash.no_update, *empty
+        return f"[ERR] 回测异常: {str(e)[:80]}", dash.no_update, *empty, _trade_ver
 
     if not ok:
         print(f"[DEBUG] Pipeline failed: {_state['message']}")
         empty = _init_display()
-        return f"[ERR] {_state['message']}", dash.no_update, *empty
+        return f"[ERR] {_state['message']}", dash.no_update, *empty, _trade_ver
 
     elapsed = time.time() - t0
     engine = _state["engine"]
@@ -1169,22 +1178,23 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
         prev_pnl = _calc_recommendation_pnl(prev_recs, _state["data"])
         today_plan = _build_today_plan(composite, close_panel, max_pos or cfg.MAX_POSITIONS, prev_pnl)
 
-        return msg, hint, today_plan, kpi, fig_eq, fig_dd, fig_heat, fig_factor, table
+        return msg, hint, today_plan, kpi, fig_eq, fig_dd, fig_heat, fig_factor, table, _trade_ver
 
     except Exception as e:
         traceback.print_exc()
         print(f"[DASH ERROR] handle_run chart build: {e}")
         empty = _init_display()
-        return f"[ERR] 图表生成失败: {str(e)[:80]}", dash.no_update, *empty
+        return f"[ERR] 图表生成失败: {str(e)[:80]}", dash.no_update, *empty, _trade_ver
 
 
 # ======== 投资历史 — 常驻回调（页面加载即显示，不依赖回测）========
 @app.callback(
     Output("invest-history-container", "children"),
-    [Input("url", "pathname"),        # 页面加载触发
-     Input("btn-cache", "n_clicks"),  # 回测后也刷新
+    [Input("url", "pathname"),
+     Input("btn-cache", "n_clicks"),
      Input("btn-full", "n_clicks"),
-     Input("btn-execute", "n_clicks")],
+     Input("btn-execute", "n_clicks"),
+     Input("trade-version", "data")],
 )
 def load_invest_history(pathname, n_cache, n_full, n_execute):
     """页面加载时自动从磁盘读取投资历史 + 缓存价格计算 P&L"""
@@ -1224,7 +1234,7 @@ def _rebuild_display(status_msg, use_cache_only=False):
 
     if engine is None or composite is None or close_panel is None:
         empty = _init_display()
-        return "[ERR] 请先加载数据", dash.no_update, *empty
+        return "[ERR] 请先加载数据", dash.no_update, *empty, _trade_ver
 
     m = engine.metrics
 
@@ -1302,7 +1312,7 @@ def _rebuild_display(status_msg, use_cache_only=False):
     else:
         table = html.P("暂无交易记录", style={"color": "#666", "textAlign": "center"})
 
-    return msg, hint, today_plan, kpi, fig_eq, fig_dd, fig_heat, fig_factor, table
+    return msg, hint, today_plan, kpi, fig_eq, fig_dd, fig_heat, fig_factor, table, _trade_ver
 
 
 # ======== 自动交易状态指示 ========
