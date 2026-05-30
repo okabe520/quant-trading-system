@@ -508,6 +508,63 @@ def _check_and_auto_trade():
     return state
 
 
+# ---------------------------------------------------------------------------
+# 后台自动交易调度线程（仅本地版）
+# ---------------------------------------------------------------------------
+def _auto_trade_loop():
+    """后台线程：每小时检查一次，工作日自动执行调仓"""
+    import time as _time
+    import config as cfg
+
+    if not cfg.AUTO_TRADE:
+        return
+
+    print("[AUTO] 后台调度已启动，每 60 分钟检查一次", flush=True)
+    while True:
+        _time.sleep(3600)
+        try:
+            now = datetime.now()
+            if now.weekday() >= 5:  # 周末跳过
+                continue
+            if now.hour < 9 or now.hour > 20:  # 非交易时段跳过
+                continue
+
+            # 加载最新数据
+            from data import fetch_stock_pool, build_panel
+            from factors import compute_all_factors
+            from strategy import normalize_factors, generate_signals, get_target_weights
+            from backtest import BacktestEngine
+
+            d = fetch_stock_pool(None, None, None, use_cache_only=False)
+            if not d:
+                continue
+
+            close = build_panel(d, "close")
+            factors = compute_all_factors(d)
+            composite = normalize_factors(factors)
+            signals = generate_signals(composite, max_positions=cfg.MAX_POSITIONS)
+            weights = get_target_weights(signals)
+
+            engine = BacktestEngine(
+                close_panel=close, target_weights=weights,
+                initial_capital=cfg.INITIAL_CAPITAL,
+            )
+            engine.run()
+
+            _state["data"] = d
+            _state["close_panel"] = close
+            _state["factors"] = factors
+            _state["composite"] = composite
+            _state["signals"] = signals
+            _state["weights"] = weights
+            _state["engine"] = engine
+            _state["loaded"] = True
+
+            _check_and_auto_trade()
+        except Exception as e:
+            print(f"[AUTO] 后台检查异常: {e}", flush=True)
+
+
 def _load_investment_history():
     """加载所有投资历史"""
     if not os.path.exists(INVEST_HISTORY_FILE):
@@ -1147,6 +1204,12 @@ def load_invest_history(pathname, n_cache, n_full, n_execute):
 
     return _build_investment_history_card(hist_df)
 
+
+# ── 后台自动交易线程（仅本地版启动）──
+if cfg.AUTO_TRADE:
+    import threading
+    _auto_thread = threading.Thread(target=_auto_trade_loop, daemon=True)
+    _auto_thread.start()
 
 if __name__ == "__main__":
     app.run(debug=False, port=cfg.DASH_PORT, host="0.0.0.0")
