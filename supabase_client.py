@@ -71,10 +71,13 @@ def save_investment_round(user_id: str, records: list[dict]) -> bool:
     return _supabase_save(user_id, records)
 
 
-def close_prev_holdings(user_id: str, execute_date: str, prices: dict[str, float]) -> int:
+def close_prev_holdings(user_id: str, execute_date: str, prices: dict[str, float],
+                        skip_same_date: bool = False) -> tuple[int, float]:
+    """关闭持仓并返回 (关闭数量, 加权收益率)。
+    skip_same_date=True 时跳过与 execute_date 同日的持仓（自动调仓用）。"""
     if MODE == "csv":
-        return _csv_close(user_id, execute_date, prices)
-    return _supabase_close(user_id, execute_date, prices)
+        return _csv_close(user_id, execute_date, prices, skip_same_date)
+    return _supabase_close(user_id, execute_date, prices, skip_same_date)
 
 
 def user_exists(username: str) -> bool:
@@ -117,12 +120,18 @@ def _supabase_save(user_id: str, records: list[dict]) -> bool:
     return True
 
 
-def _supabase_close(user_id: str, execute_date: str, prices: dict[str, float]) -> int:
+def _supabase_close(user_id: str, execute_date: str, prices: dict[str, float],
+                    skip_same_date: bool = False) -> tuple[int, float]:
     resp = _supabase.table("investments").select("*").eq("user_id", user_id).eq("status", "holding").execute()
     if not resp.data:
-        return 0
+        return 0, 0.0
     count = 0
+    total_return = 0.0
+    total_weight = 0.0
     for row in resp.data:
+        row_ex_date = str(row.get("execute_date", ""))[:10]
+        if skip_same_date and row_ex_date == execute_date:
+            continue
         stock = row["stock"]
         if stock in prices:
             entry = row["entry_price"]
@@ -136,7 +145,10 @@ def _supabase_close(user_id: str, execute_date: str, prices: dict[str, float]) -
                     "exit_date": execute_date,
                 }).eq("id", row["id"]).execute()
                 count += 1
-    return count
+                total_return += ret * row.get("weight", 0.1)
+                total_weight += row.get("weight", 0.1)
+    weighted_ret = round(total_return / total_weight, 2) if total_weight > 0 else 0.0
+    return count, weighted_ret
 
 
 # ═══════════════════════════════════════════════════
@@ -220,19 +232,24 @@ def _csv_save(user_id: str, records: list[dict]) -> bool:
     return True
 
 
-def _csv_close(user_id: str, execute_date: str, prices: dict[str, float]) -> int:
+def _csv_close(user_id: str, execute_date: str, prices: dict[str, float],
+               skip_same_date: bool = False) -> tuple[int, float]:
     path = _csv_path()
     if not os.path.exists(path):
-        return 0
+        return 0, 0.0
     df = pd.read_csv(path, dtype={"stock": str})
     if "user_id" not in df.columns:
         df["user_id"] = "default"
 
     mask = (df["user_id"] == user_id) & (df.get("status", "holding") == "holding")
+    if skip_same_date:
+        mask = mask & (df["execute_date"] != execute_date)
     if not mask.any():
-        return 0
+        return 0, 0.0
 
     count = 0
+    total_return = 0.0
+    total_weight = 0.0
     for idx in df[mask].index:
         stock = df.at[idx, "stock"]
         if stock in prices:
@@ -245,6 +262,9 @@ def _csv_close(user_id: str, execute_date: str, prices: dict[str, float]) -> int
                 df.at[idx, "status"] = "closed"
                 df.at[idx, "exit_date"] = execute_date
                 count += 1
+                total_return += ret * float(df.at[idx, "weight"])
+                total_weight += float(df.at[idx, "weight"])
 
     df.to_csv(path, index=False)
-    return count
+    weighted_ret = round(total_return / total_weight, 2) if total_weight > 0 else 0.0
+    return count, weighted_ret

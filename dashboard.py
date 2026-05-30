@@ -51,6 +51,7 @@ _state = {
 }
 _trade_ver = 0  # 每次交易后 +1，触发 invest-history 刷新
 _trade_lock = threading.Lock()  # 防止后台线程与页面回调并发交易
+_current_user = "local"  # 本地版默认用户；线上版登录后更新
 
 
 def run_pipeline(stock_pool, start_date, end_date, max_pos, init_cap, use_cache_only=False):
@@ -380,7 +381,7 @@ def _execute_investment(composite, close_panel, max_pos, force=False):
 
 def _execute_investment_locked(composite, close_panel, max_pos, force):
     """_execute_investment 的实际逻辑，调用方需持有 _trade_lock"""
-    global _trade_ver
+    global _trade_ver, _current_user
     if composite is None or composite.empty:
         return False, "无策略数据"
 
@@ -391,49 +392,26 @@ def _execute_investment_locked(composite, close_panel, max_pos, force):
         return False, "当前无符合条件的股票"
 
     # 加载历史
-    if os.path.exists(INVEST_HISTORY_FILE):
-        df_all = pd.read_csv(INVEST_HISTORY_FILE, dtype={"stock": str})
-    else:
-        df_all = pd.DataFrame()
+    hist = db.load_investment_history(_current_user)
 
-    # 同一日期去重（force=True 时跳过，用于手动中断重置）
-    if not force and not df_all.empty:
-        if str(last_date.date()) in df_all[df_all["status"] == "holding"]["execute_date"].values:
+    # 同一日期去重（force=True 时跳过）
+    if not force and not hist.empty:
+        if str(last_date.date()) in hist[hist["status"] == "holding"]["execute_date"].values:
             return False, f"日期 {last_date.date()} 已有执行记录"
 
-    # ── 1. 结算所有现有持仓（force 模式下次日也关，普通模式只关不同日期的）──
-    closed_count = 0
-    if not df_all.empty:
-        holding_mask = df_all["status"] == "holding"
-        if holding_mask.any():
-            # 普通模式：只关不同日期的持仓；force 模式：全部关
-            if not force:
-                current_date_str = str(last_date.date())
-                holding_mask = holding_mask & (df_all["execute_date"] != current_date_str)
-        if holding_mask.any():
-            prev_date = df_all.loc[holding_mask, "execute_date"].iloc[0]
-            for idx in df_all[holding_mask].index:
-                stock = df_all.at[idx, "stock"]
-                entry_price = df_all.at[idx, "entry_price"]
-                if stock in close_panel.columns:
-                    exit_price = float(close_panel.loc[last_date, stock])
-                    if not pd.isna(exit_price) and exit_price > 0 and not pd.isna(entry_price) and entry_price > 0:
-                        ret = round((exit_price / entry_price - 1) * 100, 2)
-                        df_all.at[idx, "exit_price"] = round(exit_price, 2)
-                        df_all.at[idx, "return_pct"] = ret
-                        df_all.at[idx, "status"] = "closed"
-                        df_all.at[idx, "exit_date"] = last_date.strftime("%Y-%m-%d")
-                        closed_count += 1
-            if closed_count > 0:
-                prev_holding = df_all[df_all["execute_date"] == str(prev_date).split()[0][:10]]
-                prev_holding = prev_holding.dropna(subset=["return_pct", "weight"])
-                if not prev_holding.empty:
-                    prev_weighted = round(
-                        (prev_holding["return_pct"] * prev_holding["weight"]).sum() / prev_holding["weight"].sum(), 2
-                    )
-                else:
-                    prev_weighted = 0.0
-                print(f"[INVEST] Closed round {prev_date} ({closed_count} stocks), weighted return: {prev_weighted:+.2f}%")
+    # ── 1. 结算现有持仓 ──
+    prices = {}
+    for s in set(hist[hist["status"] == "holding"]["stock"].tolist()):
+        s_int = int(s)
+        if s_int in close_panel.columns:
+            prices[s] = float(close_panel.loc[last_date, s_int])
+    execute_date_str = last_date.strftime("%Y-%m-%d")
+    closed_count, weighted_ret = db.close_prev_holdings(
+        _current_user, execute_date_str, prices,
+        skip_same_date=not force,  # force=True 时全部关；普通模式跳过同日
+    )
+    if closed_count > 0:
+        print(f"[INVEST] Closed {closed_count} stocks, weighted return: {weighted_ret:+.2f}%")
 
     # ── 2. 建仓新推荐 ──
     n = len(top)
@@ -442,25 +420,19 @@ def _execute_investment_locked(composite, close_panel, max_pos, force):
         price = close_panel.loc[last_date, stock] if stock in close_panel.columns else float("nan")
         stock_code = f"{int(stock):06d}"
         records.append({
-            "execute_date": last_date.strftime("%Y-%m-%d"),
+            "execute_date": execute_date_str,
             "stock": stock_code,
             "name": cfg.STOCK_NAMES.get(stock_code, stock_code),
             "score": round(float(score), 4),
             "weight": round(1.0 / n, 4),
             "entry_price": round(float(price), 2),
-            "exit_price": None,
-            "return_pct": None,
-            "status": "holding",
         })
 
-    df_new = pd.DataFrame(records)
-    df_all = pd.concat([df_all, df_new], ignore_index=True)
-    df_all.to_csv(INVEST_HISTORY_FILE, index=False)
+    db.save_investment_round(_current_user, records)
 
     msg = f"已执行 {n} 只建仓"
     if closed_count > 0:
         msg += f"，上轮已结算({closed_count}只)"
-    global _trade_ver
     _trade_ver += 1
     print(f"[INVEST] {msg}")
     return True, msg
@@ -583,10 +555,7 @@ def _auto_trade_loop():
 
 def _load_investment_history():
     """加载所有投资历史"""
-    if not os.path.exists(INVEST_HISTORY_FILE):
-        return pd.DataFrame()
-    df = pd.read_csv(INVEST_HISTORY_FILE, parse_dates=["execute_date"], dtype={"stock": str})
-    return df.sort_values("execute_date")
+    return db.load_investment_history(_current_user)
 
 
 def _update_investment_pnl(history_df, data_dict):
@@ -1367,6 +1336,7 @@ def update_auto_status(pathname, n_cache, n_execute):
      State("login-pw", "value")],
 )
 def handle_auth(n_login, n_register, user, pw):
+    global _current_user
     ctx = callback_context
     t = ctx.triggered_id
     if t is None:
@@ -1382,6 +1352,7 @@ def handle_auth(n_login, n_register, user, pw):
                 if db.user_exists(u):
                     return dash.no_update, "用户已存在"
                 db.register_user(u, pw)
+                _current_user = u
                 return {"display": "none"}, "注册成功"
             else:
                 return dash.no_update, "注册功能不可用"
@@ -1392,10 +1363,12 @@ def handle_auth(n_login, n_register, user, pw):
                 if not db.user_exists(u):
                     return dash.no_update, "用户不存在，请先注册"
                 if db.verify_login(u, pw):
+                    _current_user = u
                     return {"display": "none"}, ""
                 return dash.no_update, "密码错误"
             else:
                 if db.verify_login("admin", pw):
+                    _current_user = "admin"
                     return {"display": "none"}, ""
                 return dash.no_update, "密码错误"
         return dash.no_update, "数据库不可用"
