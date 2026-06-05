@@ -394,17 +394,21 @@ def _execute_investment_locked(composite, close_panel, max_pos, force):
     # 加载历史
     hist = db.load_investment_history(_current_user)
 
+    has_holdings = (not hist.empty and "status" in hist.columns
+                    and "holding" in hist["status"].values)
+
     # 同一日期去重（force=True 时跳过）
-    if not force and not hist.empty:
+    if not force and has_holdings:
         if str(last_date.date()) in hist[hist["status"] == "holding"]["execute_date"].values:
             return False, f"日期 {last_date.date()} 已有执行记录"
 
     # ── 1. 结算现有持仓 ──
     prices = {}
-    for s in set(hist[hist["status"] == "holding"]["stock"].tolist()):
-        s_int = int(s)
-        if s_int in close_panel.columns:
-            prices[s] = float(close_panel.loc[last_date, s_int])
+    if has_holdings:
+        for s in set(hist[hist["status"] == "holding"]["stock"].tolist()):
+            s_int = int(s)
+            if s_int in close_panel.columns:
+                prices[s] = float(close_panel.loc[last_date, s_int])
     execute_date_str = last_date.strftime("%Y-%m-%d")
     closed_count, weighted_ret = db.close_prev_holdings(
         _current_user, execute_date_str, prices,
