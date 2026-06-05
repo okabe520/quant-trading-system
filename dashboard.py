@@ -426,6 +426,7 @@ def _execute_investment_locked(composite, close_panel, max_pos, force):
             "score": round(float(score), 4),
             "weight": round(1.0 / n, 4),
             "entry_price": round(float(price), 2),
+            "status": "holding",
         })
 
     db.save_investment_round(_current_user, records)
@@ -969,8 +970,14 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
                              use_cache_only=True)
             if not ok:
                 return f"[ERR] {_state['message']}", dash.no_update, *_init_display(), _trade_ver
-        success, exec_msg = _execute_investment(_state["composite"], _state["close_panel"],
-                                                max_pos or cfg.MAX_POSITIONS, force=True)
+        try:
+            success, exec_msg = _execute_investment(_state["composite"], _state["close_panel"],
+                                                    max_pos or cfg.MAX_POSITIONS, force=True)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            exec_msg = f"[DB错误] 数据库写入失败: {e}"
+            success = False
         # 手动操作后重置自动调仓计时
         if success:
             cp = _state.get("close_panel")

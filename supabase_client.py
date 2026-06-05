@@ -99,7 +99,11 @@ def register_user(username: str, password: str) -> bool:
 # ═══════════════════════════════════════════════════
 
 def _supabase_load(user_id: str) -> pd.DataFrame:
-    resp = _supabase.table("investments").select("*").eq("user_id", user_id).order("execute_date", desc=False).execute()
+    try:
+        resp = _supabase.table("investments").select("*").eq("user_id", user_id).order("execute_date", desc=False).execute()
+    except Exception as e:
+        print(f"[supabase] SELECT (load) failed: {e}", flush=True)
+        return pd.DataFrame()
     if not resp.data:
         return pd.DataFrame()
     df = pd.DataFrame(resp.data)
@@ -116,13 +120,21 @@ def _supabase_load(user_id: str) -> pd.DataFrame:
 def _supabase_save(user_id: str, records: list[dict]) -> bool:
     for r in records:
         r["user_id"] = user_id
-    _supabase.table("investments").insert(records).execute()
+    try:
+        _supabase.table("investments").insert(records).execute()
+    except Exception as e:
+        print(f"[supabase] INSERT failed: {e}", flush=True)
+        raise RuntimeError(f"Supabase INSERT 失败: {e}") from e
     return True
 
 
 def _supabase_close(user_id: str, execute_date: str, prices: dict[str, float],
                     skip_same_date: bool = False) -> tuple[int, float]:
-    resp = _supabase.table("investments").select("*").eq("user_id", user_id).eq("status", "holding").execute()
+    try:
+        resp = _supabase.table("investments").select("*").eq("user_id", user_id).eq("status", "holding").execute()
+    except Exception as e:
+        print(f"[supabase] SELECT (close) failed: {e}", flush=True)
+        raise RuntimeError(f"Supabase 查询持仓失败: {e}") from e
     if not resp.data:
         return 0, 0.0
     count = 0
@@ -138,12 +150,16 @@ def _supabase_close(user_id: str, execute_date: str, prices: dict[str, float],
             exit_p = prices[stock]
             if entry and entry > 0 and exit_p > 0:
                 ret = round((exit_p / entry - 1) * 100, 2)
-                _supabase.table("investments").update({
-                    "exit_price": round(exit_p, 2),
-                    "return_pct": ret,
-                    "status": "closed",
-                    "exit_date": execute_date,
-                }).eq("id", row["id"]).execute()
+                try:
+                    _supabase.table("investments").update({
+                        "exit_price": round(exit_p, 2),
+                        "return_pct": ret,
+                        "status": "closed",
+                        "exit_date": execute_date,
+                    }).eq("id", row["id"]).execute()
+                except Exception as e:
+                    print(f"[supabase] UPDATE (close) failed for stock {stock}: {e}", flush=True)
+                    raise RuntimeError(f"Supabase 更新持仓 {stock} 失败: {e}") from e
                 count += 1
                 total_return += ret * row.get("weight", 0.1)
                 total_weight += row.get("weight", 0.1)
