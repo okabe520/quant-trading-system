@@ -982,7 +982,7 @@ def handle_run(n_auto, n_cache, n_full, n_execute, stock_pool, start_date, end_d
                 return f"[ERR] {_state['message']}", dash.no_update, *_init_display(), _trade_ver
         try:
             success, exec_msg = _execute_investment(_state["composite"], _state["close_panel"],
-                                                    max_pos or cfg.MAX_POSITIONS, force=True)
+                                                    max_pos or cfg.MAX_POSITIONS, force=False)
         except Exception as e:
             import traceback
             traceback.print_exc()
