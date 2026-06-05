@@ -604,14 +604,20 @@ def _build_investment_history_card(history_df):
     # 按执行日期分组统计
     dates = history_df["execute_date"].unique()
     rounds = []
+    has_status = "status" in history_df.columns
+    has_return = "return_pct" in history_df.columns
+    has_weight = "weight" in history_df.columns
     for d in sorted(dates, reverse=True):
         subset = history_df[history_df["execute_date"] == d]
         n_stocks = len(subset)
-        statuses = subset["status"].unique()
-        is_closed = "closed" in statuses and "holding" not in statuses
+        if has_status:
+            statuses = subset["status"].unique()
+            is_closed = "closed" in statuses and "holding" not in statuses
+        else:
+            is_closed = False
 
         # 加权收益（closed的用数据里的return_pct，holding的用_update_investment_pnl算的）
-        if subset["return_pct"].notna().any() and subset["weight"].notna().any():
+        if has_return and has_weight and subset["return_pct"].notna().any() and subset["weight"].notna().any():
             valid = subset.dropna(subset=["return_pct", "weight"])
             if not valid.empty:
                 weighted_ret = round((valid["return_pct"] * valid["weight"]).sum() / valid["weight"].sum(), 2)
