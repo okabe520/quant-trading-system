@@ -1343,6 +1343,35 @@ def update_auto_status(pathname, n_cache, n_execute):
     )
 
 
+# ======== 执行按钮状态（同日去重时禁用）========
+@app.callback(
+    Output("btn-execute", "disabled"),
+    [Input("trade-version", "data"),
+     Input("auto-load", "n_intervals")],
+)
+def update_execute_btn_state(trade_ver, n_auto):
+    """执行过当日策略后禁用按钮，防止重复交易"""
+    if not _state.get("loaded"):
+        return False
+    composite = _state.get("composite")
+    if composite is None or composite.empty:
+        return False
+    last_date = composite.index[-1]
+    last_date_str = str(last_date.date())
+
+    hist = _load_investment_history()
+    if hist.empty or "status" not in hist.columns:
+        return False
+    holdings = hist[hist["status"] == "holding"]
+    if holdings.empty:
+        return False
+    # 检查是否已有同日持仓
+    for _, row in holdings.iterrows():
+        if str(row["execute_date"])[:10] == last_date_str:
+            return True  # 同日已执行，禁用按钮
+    return False
+
+
 # ======== 登录/退出 ========
 @app.callback(
     [Output("login-overlay", "style"),
